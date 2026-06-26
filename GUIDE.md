@@ -1,8 +1,10 @@
-# How to generate documentation for your repo
+# How to generate and publish documentation for your repo
 
-This guide shows you how to turn **any code repository** into a clean, numbered documentation set using `template.yaml` and your own Claude. No prior knowledge is needed — you only need `template.yaml` and the steps below.
+This guide shows you how to turn **any code repository** into a clean, numbered documentation set using `template.yaml` and your own Claude — and then, optionally, publish that set to Confluence Cloud. No prior knowledge is needed; just follow the steps below.
 
-Estimated time: about 10 to 30 minutes depending on the size of your repo.
+The two stages are independent: **Stage 1** generates the docs (you review them in Obsidian), and **Stage 2** publishes them. The Markdown is the source of truth — you can edit it and re-publish at any time.
+
+Estimated time: about 10 to 30 minutes to generate, a few minutes to publish.
 
 ---
 
@@ -32,7 +34,7 @@ The document set adapts to your repo automatically:
 
 ---
 
-## Step by step
+## Stage 1 — Generate the docs
 
 ### Step 1 — Put `template.yaml` where you can reach it
 Copy `template.yaml` into a convenient place. The simplest option is to drop it inside the repo you want to document (for example at the repo root). You can delete it afterward.
@@ -155,6 +157,50 @@ my-repo-docs/
 
 ---
 
+## Stage 2 — Publish to Confluence
+
+Once you have reviewed the generated docs, you can publish them to Confluence Cloud as a page tree. This stage is separate from generation: you can publish, edit the Markdown later, and re-publish, as often as you like.
+
+### What you need to publish
+- **Python 3.9+** (no extra packages to install).
+- **Node.js / `npx`** — only if your docs contain Mermaid diagrams, which get rendered to images. Optional otherwise.
+- A **Confluence Cloud account** and an **API token** — create one at <https://id.atlassian.com/manage-profile/security/api-tokens>.
+
+### Step 1 — Set your credentials
+Copy `.env.example` to `.env`, fill in your values, and load them into your shell:
+
+```bash
+cp .env.example .env       # edit .env: base URL, email, API token
+set -a; . ./.env; set +a   # load into the shell — never commit .env
+```
+
+The base URL for Confluence Cloud ends in `/wiki`, for example `https://your-company.atlassian.net/wiki`.
+
+### Step 2 — Pick a safe place to publish
+The tool only ever writes under **one parent page** you choose, and never deletes anything. For your first run, use a low-risk target:
+- Your **personal space** (its key starts with `~`), or a throwaway test space.
+- Create one empty page in it to act as the parent, and note its **page id** from the URL: `…/pages/`**`123456789`**`/…`.
+
+### Step 3 — Dry-run, then publish
+```bash
+# Preview the plan — writes nothing:
+python3 confluence_publish.py "/path/to/my-repo-docs" --space "~yourname" --parent 123456789 --dry-run
+
+# Publish for real:
+python3 confluence_publish.py "/path/to/my-repo-docs" --space "~yourname" --parent 123456789
+```
+
+You will see a per-page `CREATE` / `UPDATE` plan and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run again after editing the Markdown.
+
+### What lands in Confluence
+- The numbered docs become **child pages** of your parent page; the `In Situ/` folder becomes an `In Situ` page with the deep-dives beneath it.
+- **Mermaid diagrams** are rendered to images and embedded; **`[[wikilinks]]`** become real Confluence page links; **code blocks** and **callouts** become code macros and colored panels.
+
+> [!tip] Why this is safe
+> The publisher only creates or updates pages under the parent id you pass, validates every page before sending it, and never deletes. The worst realistic outcome is a mis-formatted page under your own parent, which you can fix or delete.
+
+---
+
 ## In one sentence
 
-Install Claude Code and Obsidian, copy `template.yaml` next to your repo, paste the generation prompt into Claude Code with your two paths filled in, then open the output folder in Obsidian.
+**Generate:** install Claude Code and Obsidian, copy `template.yaml` next to your repo, paste the generation prompt into Claude Code with your two paths filled in, and review the result in Obsidian. **Publish:** set your three Confluence credentials in `.env`, then run `confluence_publish.py <docs-folder> --space KEY --parent PAGE_ID` (try `--dry-run` first).
