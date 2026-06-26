@@ -176,21 +176,44 @@ set -a; . ./.env; set +a   # load into the shell — never commit .env
 
 The base URL for Confluence Cloud ends in `/wiki`, for example `https://your-company.atlassian.net/wiki`.
 
-### Step 2 — Pick a safe place to publish
-The tool only ever writes under **one parent page** you choose, and never deletes anything. For your first run, use a low-risk target:
-- Your **personal space** (its key starts with `~`), or a throwaway test space.
-- Create one empty page in it to act as the parent, and note its **page id** from the URL: `…/pages/`**`123456789`**`/…`.
+### Step 2 — Choose the space and parent page
+
+You give the publisher two things: a **space key** and a **parent page id**. Everything is published as children of that one page, and nothing else in the space is ever touched.
+
+**Find the space key.** Open the target space in Confluence and look at the URL:
+
+```
+https://your-company.atlassian.net/wiki/spaces/KEY/...
+                                            ^^^
+```
+
+The `KEY` is the part right after `/spaces/`. A normal team/shared space has a short key like `ENG`, `DOCS`, or `PLATFORM`. (A personal space key starts with `~`.)
+
+**Choose or create the parent page.** Decide where in that space the docs should live, and create one page to act as the container — for example `Service X Documentation`. You need permission to add pages in that space, so if it is a shared space, make sure you can create pages there (and it is polite to let the space owner know). Open the page and copy its **page id** from the URL:
+
+```
+https://your-company.atlassian.net/wiki/spaces/DOCS/pages/123456789/Service+X+Documentation
+                                                          ^^^^^^^^^
+```
+
+That number is the `--parent` value.
+
+> [!note] Spaces, pages, and folders
+> The publisher always targets a **page** as the parent (you pass its page id). If you want the docs to sit inside a Confluence **folder** for tidiness, that is fine: create the folder in your space, create your parent page *inside* the folder, and pass that page's id. The tool addresses the page, not the folder — so the folder is just an organizational wrapper.
+
+> [!tip] Test in your personal space first
+> Before publishing to a shared space, do a trial run in your **personal space** (its key starts with `~`) or a throwaway space — it is private and risk-free. When it looks right, repoint at the real space and parent by simply changing `--space` and `--parent`.
 
 ### Step 3 — Dry-run, then publish
 ```bash
 # Preview the plan — writes nothing:
-python3 confluence_publish.py "/path/to/my-repo-docs" --space "~yourname" --parent 123456789 --dry-run
+python3 confluence_publish.py "/path/to/my-repo-docs" --space DOCS --parent 123456789 --dry-run
 
 # Publish for real:
-python3 confluence_publish.py "/path/to/my-repo-docs" --space "~yourname" --parent 123456789
+python3 confluence_publish.py "/path/to/my-repo-docs" --space DOCS --parent 123456789
 ```
 
-You will see a per-page `CREATE` / `UPDATE` plan and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run again after editing the Markdown.
+Use your team space key (e.g. `DOCS`) for real publishing, or `--space "~yourname"` to trial it in your personal space first. You will see a per-page `CREATE` / `UPDATE` plan and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run again after editing the Markdown.
 
 ### What lands in Confluence
 - The numbered docs become **child pages** of your parent page; the `In Situ/` folder becomes an `In Situ` page with the deep-dives beneath it.

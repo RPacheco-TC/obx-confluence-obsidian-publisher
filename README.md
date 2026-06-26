@@ -64,21 +64,23 @@ set -a; . ./.env; set +a  # load them into your shell (never commit .env)
 
 The base URL for Confluence Cloud ends in `/wiki`, for example `https://your-company.atlassian.net/wiki`.
 
-### 2. Choose where to publish
+### 2. Choose the space and parent page
 
-The tool publishes everything under **one parent page** you specify, and never touches anything outside it. For a first run, use a safe target:
+The tool publishes everything under **one parent page** you specify, and never touches anything outside it. You need two values:
 
-- A **personal space** (its key starts with `~`) or a throwaway test space.
-- Create one empty page in it to act as the parent, and note its **page id** from the URL: `…/pages/`**`123456789`**`/…`.
+- **Space key** — the part after `/spaces/` in the URL: `…/wiki/spaces/`**`DOCS`**`/…`. A team space has a short key like `DOCS` or `ENG`; a personal space key starts with `~`.
+- **Parent page id** — create one page in that space to hold the docs (you need permission to add pages there), then copy its id from the URL: `…/pages/`**`123456789`**`/…`.
+
+Tip: trial it in your **personal space** (`~yourname`) first, then repoint at the team space by changing `--space` and `--parent`.
 
 ### 3. Dry-run, then publish
 
 ```bash
 # See exactly what would happen — writes nothing:
-python3 confluence_publish.py my-repo-docs --space "~yourname" --parent 123456789 --dry-run
+python3 confluence_publish.py my-repo-docs --space DOCS --parent 123456789 --dry-run
 
 # Publish for real:
-python3 confluence_publish.py my-repo-docs --space "~yourname" --parent 123456789
+python3 confluence_publish.py my-repo-docs --space DOCS --parent 123456789
 ```
 
 The tool prints a per-page plan (`CREATE` / `UPDATE`) and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run repeatedly.
