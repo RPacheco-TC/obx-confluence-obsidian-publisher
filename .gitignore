@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Rendered Mermaid PNGs (regenerated on each publish)
+.img/
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store

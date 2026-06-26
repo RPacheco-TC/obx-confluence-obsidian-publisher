@@ -1,0 +1,631 @@
+# =============================================================================
+# template.yaml — the documentation doc-set SPEC the generator follows
+# =============================================================================
+# WHAT THIS IS
+#   The reusable, self-contained contract the generator follows to turn ANY repo
+#   into a numbered vault doc set. It was abstracted from a real, hand-written
+#   reference doc set, but it has NO runtime dependency on that (or any) source:
+#   the generator reads THIS file plus the target repo, nothing else. The split
+#   it encodes — "Universal docs … the template slots, the doc set any repo gets,
+#   stack-neutral" vs "In Situ … docs that only apply to this repo's stack; every
+#   repo's In Situ set looks different, or is empty" — applies to every repo.
+#
+# TWO SCOPES
+#   - `universal` — the fixed set of slots emitted for every repo.
+#   - `in-situ`   — the repo's OWN subsystem deep-dives: open-ended, discovered
+#     per repo, never prescribed; unnumbered, kept in an `In Situ/` subfolder.
+#
+# TWO ORTHOGONAL AXES — keep these separate (the key to "any repo, any tech")
+#   A spec abstracted from a single repo would silently assume that repo's shape
+#   (e.g. a web service with a database and a frontend). To work for a Rust
+#   library, a Go CLI, a frontend-only app, a data pipeline, or an IaC repo, it
+#   must not bake one shape in. It avoids that along two independent axes:
+#     1. `archetype` (ONE value per repo — service | library | cli | frontend |
+#        mobile | data-pipeline | infra). This RESHAPES the always-on universal
+#        docs — it changes WHAT "Code Architecture" and "API Reference" mean for
+#        this repo (a library's "API" is its exports; a CLI's is its commands).
+#        Archetype never adds or removes a doc; it re-frames the ones that emit.
+#        See the `archetype:` block.
+#     2. `detect` feature-gates (BOOLEAN, independent — `frontend`, `database`).
+#        These ADD/REMOVE whole conditional docs. A repo with no DB skips
+#        `Database Schema`; one with no UI skips the frontend docs.
+#   A service may also bundle a frontend and a DB (a full-stack web service) — so
+#   archetype and the gates are orthogonal, not a single enum. Pick archetype to FRAME,
+#   flip gates to INCLUDE/EXCLUDE.
+#
+# THE NUMBERING CONTRACT (important)
+#   Sections carry a stable `key` and a sort `order` — NOT a hard-coded NN.
+#   The generator emits only the sections whose `when:` passes, sorts by
+#   `order`, then assigns gap-free `01..NN` filenames over what survived, and
+#   generates `00 - Index` LAST from the titles actually produced.
+#   This is what keeps the set "numbered gap-free" even when a conditional doc
+#   (frontend, database) is skipped. Cross-links use the FINAL numbers, which
+#   only the generator knows — so the generator owns wikilink resolution.
+#
+# ANCHOR RULE (binds every intent below)
+#   Cross-references are `[[NN - Title#Exact Heading Text]]` using the LITERAL
+#   heading text (backticks, em-dashes, periods, case preserved) — never a
+#   kebab-slug. Obsidian resolves against literal heading text; slugs silently
+#   fail. Keep `[ ] # | ^` out of any heading another doc may link to (those
+#   chars make a heading unlinkable in Obsidian). A post-generation lint must
+#   re-parse every emitted `[[…#…]]` against the produced headings.
+# =============================================================================
+
+meta:
+  version: 1
+  # Self-contained: the generator reads THIS file plus the target repo, never any
+  # external doc set. The structure was abstracted from one real hand-written
+  # reference set; that set is used only as a human comparison baseline during
+  # validation (see the acceptance test in the project's plan), NEVER at
+  # generation time. Detailed provenance lives in the planning docs, not here.
+  derived_from: a real hand-written reference doc set (provenance in the planning docs)
+  scopes:
+    universal: Always generated. Stack-neutral; applies to any repo. The set is
+               the same for every repo, but each doc is RE-FRAMED by the repo's
+               `archetype` (see the `archetype:` block) and two docs are gated by
+               feature detection (see `detect:`) — so a library and a service get
+               the same NUMBERED SLOTS, filled with archetype-appropriate content.
+    in-situ:   The repo's own subsystem docs — OPEN-ENDED (0..N), titles set by
+               the repo, NOT prescribed and NOT tied to any specific technology.
+               DISCOVERED from the code per run (no pre-authored list, no stack
+               special-cased). The plan's "domain" scope. Unnumbered, in the
+               `In Situ/` subfolder. See the `in_situ` block.
+  conventions:
+    filename: "NN - Title.md"             # spaces, ' - ' separators (project-doc convention)
+    in_situ_subfolder: "In Situ"          # in-situ docs are NOT numbered; they live here
+    index: "00 - Index.md"                # generated LAST, from titles actually produced
+    diagrams: native ```mermaid``` blocks  # render in Obsidian; a later publish step can re-render them to PNG. RULES: see top-level `mermaid:` block
+    callouts: "> [!abstract] / [!info] / [!important] / [!warning]"
+    frontmatter: "Open each doc with a YAML frontmatter block: required `title` (the bare Title, no NN), optional `aliases` and `tags`. Obsidian-only — a downstream converter strips it; aliases help Obsidian resolve inbound links."
+    h1: "After the frontmatter, an H1 that repeats the full 'NN — Title' (em-dash)."
+    headings: "H2 SECTION HEADINGS ARE UNNUMBERED plain text — `## Install and run`, NOT `## 3. Install and run`. Reason: the literal heading text IS the cross-link anchor, so an embedded section number would break every inbound `[[NN - Title#Heading]]` the moment sections reorder. Numbering lives ONLY in the NN-Title filename and the H1. (If you see a hand-written doc that numbers its H2s, treat that as the outlier, not the rule — inbound links target unnumbered headings.)"
+    crosslink_form: "A link to a NUMBERED universal doc MUST use its full `[[NN - Title]]` form — NEVER the bare `[[Title]]`, which Obsidian renders as an unresolved 'not created yet' link even though the numbered file exists. Only In Situ docs (which are unnumbered) are linked bare as `[[Title]]`. The generator's finalize step normalizes any stray bare-title link to its `[[NN - Title]]` form."
+    prose: "Write in FULL FORMS, never contractions: 'it is' not 'it's', 'you are' not 'you're', 'does not' not 'doesn't', 'cannot' not 'can't', 'will not' not 'won't'."
+  excluded_from_publish:
+    # Non-published material lives here and the converter skips it
+    # (md_to_confluence.py exclude `("extra",)`). Out of generation too.
+    subfolder: extra
+    examples: [Requirements.md, Production Considerations, to-UX screenshot guide]
+
+# =============================================================================
+# mermaid — how to author diagrams so they render in OBSIDIAN
+# =============================================================================
+# WHY THIS EXISTS
+#   Obsidian renders Mermaid with a bundled engine that is STRICTER than
+#   GitHub / mermaid.live about characters inside labels. A diagram that looks
+#   fine in a web playground can silently fail to render (or show a red parse
+#   error) in Obsidian. The Obsidian copy is the source of truth and must render,
+#   so author for OBSIDIAN first; a later publish step re-renders the SAME blocks
+#   to PNG, so getting Obsidian right gets the published PNG right for free.
+#
+#   The rules below are reverse-engineered from real diagrams that render cleanly
+#   in Obsidian. The tell: their flowchart nodes read `A[execute state]` and
+#   `I[interrupt kind=user_turn]` — NOT `execute(state)` or `kind: user_turn`.
+#   The author hand-avoided the breaking characters. That is the single most
+#   important habit; encode it.
+# NOTE: the prose below lives in `|` literal block scalars on purpose — it is
+# dense with backticks and colons, which YAML treats as indicators in plain/flow
+# context. Block scalars keep it valid AND readable. The generator consumes it
+# as guidance text, so structure beyond the per-type split isn't needed.
+mermaid:
+
+  # THE ONE RULE that prevents most failures.
+  label_escaping: |
+    `( ) : ; , # & " ' < >` and `{ } [ ]` inside an UNQUOTED node/edge label
+    break Obsidian's parser. Two ways out, best first:
+      1. Prefer plain-word labels — rephrase the code away:  A[apply turn]  not
+         A[apply_turn()];  kind=user_turn  not  kind: user_turn.  (This is what
+         well-rendering diagrams do, and why they render.)
+      2. If the literal token is essential, wrap the WHOLE label in double
+         quotes:  A["resolve_prompt() -> dict"].  Quoting makes parens, colons
+         and slashes safe.
+    Line breaks: use <br/> inside a QUOTED label, never a literal newline —
+      N["Compile<br/>then execute"].
+    Never: a bare `end` as a node id (lowercase end breaks flowcharts — use End
+      or "end"); backticks inside a label (shown literally); markdown such as
+      **bold** or links inside a label (shown raw).
+
+  # Applies to every diagram, every type.
+  universal: |
+    - Emit a native ```mermaid fenced block. NEVER an <img>, NEVER PlantUML
+      (@startuml) — Obsidian does not render PlantUML. "UML" here = Mermaid
+      classDiagram / sequenceDiagram / stateDiagram-v2.
+    - One diagram per fence. Lead with a `%% one-line intent` comment when the
+      purpose isn't obvious from surrounding text.
+    - Declare direction explicitly (flowchart TD / LR). TD for lifecycles and
+      pipelines; LR for request/data flow across components.
+    - Short, alpha node ids (A, P, Llm); put the human text in the label.
+      Reusing an id reuses the node.
+    - Quote EVERY relationship/edge label with a space or symbol:
+      Base <|-- Derived : "extends";   A -->|"on error"| B.
+    - Keep diagrams small (~3-12 nodes). Split a big one into two focused blocks
+      rather than one dense graph — clearer AND less likely to mis-parse.
+
+  # Per-type guidance — only the 4 types the doc set actually uses.
+  by_type:
+
+    classDiagram:   # the UML focus
+      use_for: domain models and class/type hierarchies (Domain Concepts, Code Architecture, and in-situ deep-dives such as a node/handler hierarchy).
+      rules: |
+        - Parens are LEGAL inside class member lines (unlike flowchart labels),
+          so full signatures render fine here.
+        - Visibility prefixes on members: + public, - private, # protected,
+          ~ package.
+        - Member form `+name(args) ReturnType` — a trailing return type is fine:
+          +async execute(state) dict ,  +evaluate(state) str?.
+        - GENERICS USE TILDES, NOT ANGLE BRACKETS: List~Edge~, dict~str,Any~.
+          List<Edge> breaks the parser.
+        - Relationships (UML semantics): <|-- inheritance/realization,
+          *-- composition, o-- aggregation, --> association, ..> dependency.
+          Always quote the relation label: A <|-- B : "step".
+        - Plain identifiers only — no backticks/markdown in class or member names.
+      example: |
+        ```mermaid
+        classDiagram
+            class Handler {
+                +async handle(input) Result
+                #_setup()
+                #async _resolve()
+            }
+            Handler <|-- ReadHandler : "reads"
+            Handler <|-- WriteHandler : "writes"
+        ```
+
+    flowchart:
+      use_for: lifecycles, pipelines, request/data flow (most diagrams).
+      rules: |
+        - The label_escaping rule bites HARDEST here. Plain words in nodes.
+        - Decision nodes {...}: keep the question terse and symbol-light —
+          Z{iteration over 0?} is safer than {iteration > 0?}; if you truly need
+          the symbol, quote it: Z{"iteration > 0?"}.
+        - Edge labels: A -- yes --> B (unquoted single words ok) or
+          A -->|"on close"| B (quote multi-word / symbols).
+        - Group with `subgraph Name["Title"] ... end`; the end here is the block
+          terminator (correct) — just never use end as a node id.
+
+    erDiagram:
+      use_for: Database Schema (the ER overview).
+      rules: |
+        - Cardinality glyphs: ||--o{ (one-to-many), ||--|| (one-to-one),
+          }o--o{ (many-to-many). Crow's-feet must face the right way.
+        - Attribute lines inside an entity: `TYPE name PK` / `FK` — keep types
+          simple (uuid, text, jsonb); no parens in type names.
+        - Quote a relationship label with spaces: A ||--o{ B : "has many".
+
+    sequenceDiagram:
+      use_for: request/execution flows with actors (Architecture Overview, Graph Executor and Streaming).
+      rules: |
+        - Alias actors to readable names: participant FE as Frontend.
+        - Message text after the `:` runs to end-of-line and tolerates most
+          characters — but avoid a literal `;`.  FE->>BE: POST /compile.
+        - Use alt / opt / loop / `Note over A,B: ...` blocks for branches; each
+          closes with end (block terminator — fine).
+
+# -----------------------------------------------------------------------------
+# archetype — the ONE dominant KIND of repo. Picks the framing for the always-on
+#   universal docs (it never adds/removes a doc — that is `detect`'s job; see the
+#   two-axes note in the header). The signal lists are CROSS-LANGUAGE and
+#   ILLUSTRATIVE, never exhaustive: each is "if you see this kind of thing." A
+#   new ecosystem the lists don't name is recognised by the same SHAPE (a server
+#   that listens, a packaged import, a console entrypoint, a UI app, …), not by
+#   being on a list. No language is privileged; Python/JS examples appear only as
+#   illustrations — a Go, Rust, Java, Ruby, .NET, Elixir, PHP, Swift, Kotlin, or
+#   Dart repo is classified by the same shapes.
+#
+#   SELECTION: pick the single best-fit archetype from the dominant entrypoint of
+#   the repo. If two genuinely co-apply (e.g. a service that ships a CLI), choose
+#   the one a newcomer reads first and note the secondary in the Welcome doc;
+#   when ambiguous, the generator PROPOSES one and the human review gate
+#   confirms or overrides. Fallback when nothing matches: `service` if any
+#   long-running server is present, else `library`.
+# -----------------------------------------------------------------------------
+archetype:
+  service:        # long-running server: HTTP / gRPC / GraphQL / message-consumer
+    signals: |
+      A web/RPC framework dependency (any ecosystem) — e.g. express, fastify,
+      nestjs, koa, hapi; flask, django, fastapi, starlette, aiohttp; spring-boot,
+      micronaut, quarkus, ktor; gin, echo, fiber, chi; actix-web, axum, rocket;
+      rails, sinatra, hanami; laravel, symfony; phoenix/plug; asp.net core — OR a
+      server bootstrap (a process that binds a port and serves: listen(), app.run,
+      uvicorn/gunicorn, http.ListenAndServe, a `main` that starts a server) — OR a
+      Dockerfile/compose that runs a long-lived service.
+    framing: API Reference = the network surface (endpoints/RPCs/topics); Code
+             Architecture = entrypoint → handlers/routers → service layer → data
+             access. May ALSO trip the frontend/database gates.
+  library:        # imported by other code; no server, no console entrypoint
+    signals: |
+      A distributable package manifest WITHOUT a server or CLI entrypoint —
+      package.json with "main"/"exports" and no "bin"; pyproject/setup with no
+      console-scripts; Cargo.toml with a [lib] target; a Go module meant to be
+      imported (no `main` package as the product); a .csproj class library; a
+      gemspec; a published JAR/Maven artifact; a Swift/Kotlin package.
+    framing: API Reference = the PUBLIC API / exported surface (functions, types,
+             classes a consumer imports); Code Architecture = public entry →
+             core modules/packages → internal helpers. Usually no DB/frontend.
+  cli:            # run from a terminal; the product is a command
+    signals: |
+      A console entrypoint — package.json "bin"; pyproject [project.scripts] /
+      console_scripts; a Go `main` in cmd/ using cobra/urfave-cli/flag; a Rust
+      bin target using clap; an arg-parsing dependency as a primary surface
+      (click, typer, argparse, commander, oclif, picocli, thor); a man page or a
+      `Usage:` banner.
+    framing: API Reference = the COMMAND surface (commands, subcommands, flags,
+             stdin/stdout contract, exit codes); Code Architecture = entrypoint →
+             command dispatch → per-command logic → shared core.
+  frontend:       # a browser/SPA app whose product IS the UI (no backend of its own)
+    signals: |
+      A UI-app framework as the top-level product — react+react-dom, vue, svelte/
+      sveltekit, @angular/core, solid, next, nuxt, astro, remix, ember, lit — with
+      an app entry (index.html / main.{ts,tsx,jsx} / App.*) and NO server of its
+      own. (A frontend BUNDLED inside a service is the `frontend` GATE, not this
+      archetype — see `detect`.)
+    framing: Code Architecture = the app shell + non-UI logic (the Frontend
+             Architecture doc carries the UI detail); API Reference = the API
+             client / data surface it consumes, or its public components/props if
+             it is a component library. Trips the frontend gate by construction.
+             OVERLAP NOTE — Code Architecture (always-on) and Frontend
+             Architecture (gated, present here) both describe structure. For a
+             thin SPA where almost everything IS the UI, Code Architecture has
+             little to say — keep it minimal (build/tooling, entry point, non-UI
+             modules like the data/api layer and shared utilities) and let
+             Frontend Architecture carry the UI weight. Code Architecture stays
+             in the set (it is always-on; dropping it would break the gap-free
+             numbering); if there is genuinely no non-UI logic, make it a short
+             pointer to the Frontend Architecture doc rather than padding it.
+  mobile:         # native or cross-platform mobile/desktop app
+    signals: |
+      An Xcode project / Swift Package + SwiftUI/UIKit; a Gradle project with
+      AndroidManifest.xml + Kotlin/Java; react-native; a Flutter pubspec.yaml; a
+      .NET MAUI / Tauri / Electron desktop shell.
+    framing: API Reference = the app's service/API client + any plugin/native
+             bridge surface; Code Architecture = app entry → screens/navigation →
+             view-models/state → data layer.
+  data-pipeline:  # batch/stream/ML processing; the product is a data flow
+    signals: |
+      A workflow/orchestration or data framework — airflow, dagster, prefect,
+      luigi, kedro, dbt; spark/pyspark, beam, flink; an ML training stack
+      (torch/tensorflow/jax with a train loop); a notebooks-heavy repo with a
+      pipeline driver.
+    framing: API Reference = the pipeline's inputs/outputs, datasets, and
+             trigger/CLI surface; Code Architecture = sources → transforms/stages
+             → sinks, plus scheduling/orchestration.
+  infra:          # infrastructure-as-code; the product is deployable infra
+    signals: |
+      Terraform (*.tf) / OpenTofu; a Helm chart (Chart.yaml); raw Kubernetes
+      manifests; Ansible playbooks; Pulumi; CloudFormation/CDK; a packer/cloud-init
+      repo.
+    framing: API Reference = the modules/charts/inputs (variables) and outputs it
+             exposes; Code Architecture = modules/stacks → resources →
+             environments/overlays. Usually no DB-schema/frontend docs.
+
+# -----------------------------------------------------------------------------
+# detect — boolean feature-gates that ADD/REMOVE conditional UNIVERSAL slots
+#   (NOT the archetype above — that only re-frames). Each is a cheap,
+#   deterministic check: a dependency, a directory, or an import grep — no LLM
+#   needed. Signal lists are CROSS-LANGUAGE and ILLUSTRATIVE — match by shape,
+#   not membership. Two gate forms:
+#     - `any:` (frontend)        -> TRUE if ANY listed signal is present.
+#     - `strong:` / `weak:` (database) -> STRONG present ⇒ TRUE (emit);
+#       WEAK-only ⇒ UNCERTAIN (propose the doc flagged for the review gate, never
+#       auto-emit). This separates schema OWNERSHIP from mere CONNECTIVITY — see
+#       the `database` block for why.
+#
+#   These gate universal docs only (frontend → 07/08, database → 05). In-situ
+#   docs are NOT gated here — they are discovered from the code per repo (see
+#   the `in_situ` block), so no stack-specific markers live in this spec.
+# -----------------------------------------------------------------------------
+detect:
+  frontend:
+    # True for a service that BUNDLES a UI, OR for a `frontend` archetype (which
+    # satisfies this by construction). Detected by a UI framework anywhere in the
+    # repo — not a fixed directory path.
+    any:
+      - dependency: [react, vue, "@vue/runtime-core", svelte, "@sveltejs/kit", "@angular/core", solid-js, next, nuxt, astro, remix, ember-source, lit, preact]
+      - file_in_repo: index.html        # a built/served browser entry
+      - has_ui_app_entry: true          # main.{ts,tsx,jsx} / App.{tsx,vue,svelte} alongside a UI framework dep
+      - archetype: frontend             # the frontend archetype always trips this gate
+  database:
+    # The `Database Schema` doc documents a schema THIS REPO OWNS — tables it
+    # defines, with an ER diagram and "how to add a migration". So the gate must
+    # distinguish OWNERSHIP from mere CONNECTIVITY. A pipeline or service that
+    # reads someone else's warehouse through a bare driver, or a repo with a stray
+    # seed.sql, talks to a DB but owns no schema — emitting the doc there yields a
+    # page no one can honestly fill. Two tiers:
+    #
+    #   STRONG  -> gate TRUE, emit the doc. Signal of schema ownership: an ORM /
+    #             migration tool, a migration/schema directory, or a schema file.
+    #   WEAK    -> gate UNCERTAIN, do NOT auto-emit. Connectivity only (a bare
+    #             driver, loose *.sql, a generic CREATE TABLE). PROPOSE the doc
+    #             flagged "DB connectivity seen, schema ownership unconfirmed" and
+    #             let the human review gate decide. Weak-only never silently
+    #             emits.
+    strong:
+      any:
+        - dependency: [
+            # ORMs / query-mappers that define the schema in code
+            sqlalchemy, django, peewee, tortoise-orm,                      # Python
+            prisma, "@prisma/client", drizzle-orm, typeorm, sequelize, "mikro-orm", mongoose,  # JS/TS
+            gorm, ent,                                                     # Go
+            diesel, "sea-orm",                                            # Rust
+            activerecord, ecto, doctrine,                                # Ruby / Elixir / PHP
+            hibernate, "jakarta.persistence", jooq, spring-data-jpa,      # JVM
+            "Microsoft.EntityFrameworkCore",                              # .NET
+            # migration tools (own the schema's history)
+            alembic, flyway, "org.liquibase",
+          ]
+        - dir: [migrations, db/migrate, alembic, "prisma", ent/schema, db/migrations]
+        - file_in_repo: [schema.prisma, "schema.sql", "structure.sql"]
+        - grep: "create_engine|Base.metadata|declarative_base|alembic|liquibase|flyway"   # ORM/migration markers
+    weak:                                # connectivity, not ownership → review-gated, never auto-emit
+      any:
+        - dependency: [
+            psycopg, "psycopg2", asyncpg, mysqlclient, "sqlite3",        # Python drivers
+            pg, mysql2, "better-sqlite3", knex,                          # JS/TS drivers / query builder
+            "database/sql", pgx, sqlx,                                   # Go / Rust drivers
+            dapper,                                                       # .NET micro-ORM
+          ]
+        - glob: "**/*.sql"                  # raw SQL anywhere (could be seed/embedded, not a schema)
+        - grep: "CREATE TABLE"             # bare DDL with no migration tool around it
+
+# -----------------------------------------------------------------------------
+# sections — one entry per doc. `intent` is the generation contract: what to
+#   read in the repo and what the doc must contain. Every intent is written to be
+#   ARCHETYPE-NEUTRAL: where a web-service shape (routers, endpoints, tables) once
+#   appeared hard-coded, it now appears only as ONE example among the archetypes,
+#   and the doc adapts to whichever archetype was detected. Read each intent as
+#   "do the equivalent for THIS repo's kind," never "force the service shape."
+# -----------------------------------------------------------------------------
+sections:
+
+  # ===== Getting started (universal) ========================================
+  - key: welcome
+    order: 1
+    title: Welcome and Quick Start
+    scope: universal
+    intent: >
+      The first doc a new dev reads. Cover, in order: what the product does (one
+      plain-language paragraph + who it's for); prerequisites (languages,
+      runtimes, services); install and run — give the path(s) that fit the
+      archetype: a service → run the server (host-process AND Docker if a compose
+      file exists); a CLI → install the binary and run `--help`; a library → add
+      the dependency and a minimal import/usage; a frontend → the dev server; an
+      infra repo → plan/apply against a sandbox. How to verify it worked; a "your
+      first <primary action>" walkthrough (first request / first command / first
+      import / first render); "where things live" (top-level dir map); the useful
+      task-runner targets (Makefile, npm/just/task scripts, etc.); and a "next
+      steps" list linking onward into the set.
+    diagrams: optional
+
+  - key: architecture-overview
+    order: 2
+    title: Architecture Overview
+    scope: universal
+    intent: >
+      The big picture in one diagram. Lead with a flowchart (mermaid) showing the
+      major components and how the core flow moves end to end — a request for a
+      service, an invocation for a CLI, a call chain for a library, a render/data
+      flow for a frontend, a stage pipeline for data, a provisioning flow for
+      infra. Then the lifecycle of the core operation(s) broken into phases; a
+      "why this shape?" rationale section; a folder layout at a glance; and a
+      "what's deliberately NOT here" section that names out-of-scope concerns.
+      Reference the deeper docs by their final number.
+    diagrams: required          # the system flowchart
+
+  - key: domain-concepts
+    order: 3
+    title: Domain Concepts
+    scope: universal
+    intent: >
+      The core entities and vocabulary of THIS repo — the nouns the code is built
+      around. One H2 per concept: the central abstractions (an aggregate root and
+      its versions/definitions, a unit-of-work type, a state model, a key class or
+      protocol, the primary data structures), the relationships between them, and
+      the external/integration seams. Define each FROM THE CODE (its models,
+      types, schemas, or interfaces), not from generic theory, using the repo's
+      own names. Close with a "how these pieces compose" synthesis.
+    diagrams: optional
+
+  # ===== Code (universal; reshaped by archetype; DB doc gated) ==============
+  - key: code-architecture        # neutral name: a library/CLI/frontend repo has no "backend".
+    order: 4
+    title: Code Architecture
+    scope: universal
+    intent: >
+      Walk the codebase the way IT is actually organized — each H2 anchored to a
+      real path, each component cited by `path` so a reader can jump to source.
+      The LAYERS depend on the archetype (see the `archetype:` block): a SERVICE →
+      app bootstrap/entrypoint, API routers/handlers, the service/business layer
+      (one H3 per service class with its file), models, schemas, data access,
+      config; a LIBRARY → public entry/exports, the core modules/packages,
+      internal helpers, extension points; a CLI → entrypoint, command dispatch,
+      per-command logic, shared core; a FRONTEND → the app shell and non-UI logic
+      (UI detail lives in the Frontend Architecture doc); DATA/INFRA → the
+      sources→transforms→sinks or modules→resources→environments structure. End
+      with where the tests live and a "where to go next" pointer.
+    diagrams: optional
+
+  - key: database-schema
+    order: 5
+    title: Database Schema
+    scope: universal              # universal slot, but gated — a repo with no DB skips it
+    when: database                # STRONG signal → emit; WEAK-only → propose flagged
+                                  # "schema ownership unconfirmed" for the review gate (see detect.database)
+    intent: >
+      Lead with an ER overview (mermaid erDiagram) of the tables/collections and
+      their relations. Then one H3 per table (columns, types, notable
+      constraints). Call out schema quirks (naming prefixes, metadata columns,
+      reserved fields). Document any framework- or ORM-owned tables separately
+      (e.g. a job queue's, an auth library's, or a workflow engine's own tables),
+      how tests stand up the database (the test DB vs the production engine), and
+      how to add a migration in whatever tool the repo uses.
+    diagrams: required          # ER diagram
+
+  - key: api-reference
+    order: 6
+    title: API Reference
+    scope: universal
+    intent: >
+      The repo's PUBLIC CONTRACT — what its name means depends on the archetype
+      (see `archetype:`). A SERVICE → every endpoint/RPC derived from the
+      routes/handlers: open with conventions (base path, content types) and
+      authentication, group by resource, and for each give method+path, request
+      schema, and a sample response; document streaming endpoints (SSE/WebSocket/
+      gRPC streams) and their event shapes if present; close with a "typical
+      request sequence" and how to generate client code. A LIBRARY → the public
+      API/exports (functions, types, classes a consumer imports), each with
+      signature, parameters, return, and a usage snippet; note what is public vs
+      internal and the stability/versioning policy. A CLI → the command surface:
+      each command/subcommand with its flags, arguments, stdin/stdout contract,
+      and exit codes. A FRONTEND/component lib → the exported components and their
+      props, or the API client it consumes. DATA/INFRA → the pipeline's
+      inputs/outputs and triggers, or the module/chart variables and outputs.
+    diagrams: optional
+
+  # ===== Frontend (universal slots, gated on a UI existing) =================
+  #   Emit when the `frontend` gate trips — a service that BUNDLES a UI, or a
+  #   `frontend`/`mobile` archetype (which satisfies the gate by construction).
+  #   Backend-only repos, libraries, CLIs, data/infra repos skip both.
+  - key: frontend-architecture
+    order: 7
+    title: Frontend Architecture
+    scope: universal
+    when: frontend
+    intent: >
+      Walk the UI, framework-agnostically (React, Vue, Svelte, Angular, Solid, a
+      mobile UI, …): top-level layout (root component, pages/routes/screens);
+      state management strategy; the shared types/models; the API/data client
+      (including any streaming wiring); a component map; the data flow on a
+      typical user interaction; and the styling approach. Close with a "what lives
+      where" cheat sheet. Anchor each section to a real path.
+    diagrams: optional
+
+  - key: frontend-patterns        # neutral name: "hooks" is React-only; this
+                                   # covers any framework's reusable logic.
+    order: 8
+    title: Frontend Patterns
+    scope: universal              # gated with frontend; content is repo-specific
+    when: frontend
+    intent: >
+      The reusable frontend logic, in whatever form the framework uses — React
+      hooks, Vue composables, Svelte stores/runes, Angular services, or plain
+      shared modules/utilities. One H2 per reusable unit: its signature, what it
+      does, side effects, and how it composes with the others. Include a
+      "composition" overview and "when to add a new one" guidance. Only emit if
+      the frontend actually has a meaningful set of such shared abstractions.
+    diagrams: optional
+
+  # ===== Reference & operations (universal) =================================
+  - key: development-workflow
+    order: 9
+    title: Development Workflow
+    scope: universal
+    intent: >
+      How a contributor actually works here: the task runner (Makefile, npm/just/
+      task scripts, etc.); branching model; any spec/AI-tooling workflow; coding
+      standards; commit conventions; running the project locally (whatever that
+      means for this archetype — server, CLI, library test harness, frontend dev
+      server; incl. against real services if relevant); testing locally; common
+      dev tasks; and a pre-PR checklist.
+    diagrams: optional
+
+  - key: testing-strategy
+    order: 10
+    title: Testing Strategy
+    scope: universal
+    intent: >
+      How tests are structured and run, in whatever framework the repo uses. Cover
+      the test layout; shared fixtures/setup (e.g. pytest conftest, test helpers,
+      factories, builders); each test category mapped to the code it covers (unit/
+      core logic, integration, API/contract, persistence, snapshot or record-and-
+      replay tests); UI/frontend testing if present; how to add a new test; and
+      honest coverage gaps worth knowing.
+    diagrams: optional
+
+  - key: gotchas
+    order: 11
+    title: Gotchas and Conventions
+    scope: universal
+    intent: >
+      The sharp edges — the things that bite newcomers. One H2 per gotcha:
+      the surprising behavior, why it exists, and how to handle it. Pull these
+      from real foot-guns in the code (naming quirks, reserved values, ordering
+      constraints, placeholder/auth shortcuts, build-time env inlining, etc.).
+      End with quick grep recipes for finding the relevant code.
+    diagrams: optional
+
+  - key: env-and-wiring
+    order: 12
+    title: Environment Variables and Service Wiring
+    scope: universal
+    intent: >
+      Every env var / config setting grouped by concern (machine basics, DB,
+      providers, inbound auth, outbound clients, frontend build-time, etc.), each
+      with what it does and whether it's required. Then how this repo WIRES to its
+      neighbours (the services/APIs/datastores it talks to, or that talk to it) —
+      the cross-component value pairs that must match, with a visual of what flows
+      where, and copy-pasteable example config recipes for standalone vs
+      full-stack operation, plus how to verify the wire (boot logs, a health
+      check, a dry run). For a self-contained library/CLI with no external wiring,
+      keep this to its own config/options and say so.
+    diagrams: optional           # a "what flows where" diagram is encouraged
+
+  - key: glossary
+    order: 13
+    title: Glossary
+    scope: universal
+    intent: >
+      Terms used across the codebase, alphabetized (H2 per letter, H3 per term).
+      Prefer the actual class/function/concept names from the code, each with a
+      one-to-two sentence definition. This is the landing spot for the jargon
+      the other docs use.
+    diagrams: optional
+
+  # (in-situ docs are NOT here — they are open-ended and live in the separate
+  #  top-level `in_situ:` block below, not in this fixed universal contract.)
+
+# -----------------------------------------------------------------------------
+# in_situ — the repo's OWN subsystem docs. UNLIKE `sections` above, this is
+#   OPEN-ENDED and DISCOVERED, never prescribed: a repo yields 0, 1, or many,
+#   and the titles come entirely from THAT repo's subsystems. They live
+#   unnumbered in the `In Situ/` subfolder (no subfolder at all if none).
+#   There is NO built-in list and NO technology hard-wired here — a workflow-engine
+#   service, a payments API, and a CLI tool each surface a completely different
+#   in-situ set (or none). The generator derives them from the code, per run.
+# -----------------------------------------------------------------------------
+in_situ:
+
+  principle: >
+    Universal docs are a fixed contract; in-situ docs are emergent. Count and
+    titles come from the repo, never from this spec. Zero is a valid result (a
+    thin CRUD service has none; a payments service might surface "Ledger Model",
+    "Settlement", "Webhooks"; a workflow-engine builder surfaces its graph/
+    compiler/executor internals). Each in-situ doc is a standalone deep-dive into
+    ONE cohesive subsystem the universal set only mentions in passing. Same
+    authoring rules as universal docs (H1, callouts, native mermaid, literal
+    anchors) — they just aren't numbered and they sit under `In Situ/`.
+
+  discovery: >
+    This is the SOLE source of in-situ docs — there is no pre-authored pack
+    list and no stack is special-cased. After the universal docs are planned,
+    scan the repo for every SIGNIFICANT subsystem a newcomer could not
+    understand from the universal docs alone: a domain engine (billing/ledger,
+    routing, scheduling), a custom protocol or streaming layer, a rules /
+    expression DSL, a plugin or extension system, a data / ETL pipeline, an auth
+    model, a compiler or interpreter, a state machine, etc. Identify each
+    cohesive one from the code itself — a package/module cluster, a base class
+    plus its implementations, a service that carries its own vocabulary. For
+    each, PROPOSE an in-situ doc: draft a title (from the subsystem's REAL name
+    in the code, not a generic label) plus an intent in the same shape as a
+    universal section's intent, and emit it for human review. Propose, don't
+    force — zero is a valid outcome and the reviewer cuts any that don't earn
+    their place.
+
+  worked_example: >
+    For example, a graph-builder service built on a workflow engine with a visual
+    canvas might discover a handful of In Situ docs — a primer on the underlying
+    engine, the compiler that turns its config into a runnable graph, the
+    executor/streaming layer, the node implementations, the state/routing model,
+    an edge-condition reference, and the canvas component. A repo with none of
+    those technologies discovers NONE of them — it surfaces whatever ITS own
+    subsystems are, or nothing. Treat this purely as a reference for the right
+    depth and granularity, never as a checklist to fill.
