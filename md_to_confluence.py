@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Markdown -> Confluence storage-format conversion helpers.
+"""Markdown-to-Confluence storage-format conversion helpers.
 
-A library of pure functions used by confluence_publish.py to turn Obsidian-style
-Markdown into Confluence-compatible HTML: inline formatting, tables, lists,
-callouts, code, and Mermaid rendering (via npx @mermaid-js/mermaid-cli).
+A library of pure functions used by :mod:`confluence_publish` to turn
+Obsidian-style Markdown into Confluence-compatible HTML: inline formatting,
+tables, lists, callouts, code, and Mermaid rendering (via
+``npx @mermaid-js/mermaid-cli``).
 
-Requirements: Python 3.9+, and `npx` on PATH for Mermaid rendering (optional;
-falls back to a styled block if unavailable).
+:requires: Python 3.9+, and ``npx`` on ``PATH`` for Mermaid rendering (optional;
+    falls back to a styled block when unavailable).
 """
 
 from __future__ import annotations  # PEP 563: defer annotation eval so the
@@ -32,7 +33,20 @@ _current_img_rel: str = ""  # relative path from HTML file to img dir
 
 
 def render_mermaid_png(mermaid_code: str, img_dir: Path, img_rel: str) -> str | None:
-    """Render Mermaid code to PNG via mmdc, return ``<img>`` tag or ``None`` on failure."""
+    """Render Mermaid code to a PNG via ``mmdc``.
+
+    The PNG is named by a hash of the diagram source and cached in ``img_dir``
+    (an existing file is reused, not re-rendered).
+
+    :param mermaid_code: the Mermaid diagram source.
+    :type mermaid_code: str
+    :param img_dir: directory to write the PNG into.
+    :type img_dir: Path
+    :param img_rel: relative path used in the emitted ``src`` attribute.
+    :type img_rel: str
+    :returns: an ``<img>`` tag string, or ``None`` if rendering failed.
+    :rtype: str | None
+    """
     digest = hashlib.md5(mermaid_code.encode()).hexdigest()[:10]
     filename = f"mermaid_{digest}.png"
     out_path = img_dir / filename
@@ -70,7 +84,13 @@ def render_mermaid_png(mermaid_code: str, img_dir: Path, img_rel: str) -> str | 
 
 
 def strip_frontmatter(text: str) -> str:
-    """Drop a leading YAML frontmatter block (``---`` … ``---``) if present."""
+    """Drop a leading YAML frontmatter block (``---`` ... ``---``) if present.
+
+    :param text: the document text.
+    :type text: str
+    :returns: the text with any leading frontmatter removed.
+    :rtype: str
+    """
     if text.startswith('---\n') or text.startswith('---\r\n'):
         m = re.match(r'^---\r?\n.*?\r?\n---\r?\n?', text, re.DOTALL)
         if m:
@@ -79,10 +99,16 @@ def strip_frontmatter(text: str) -> str:
 
 
 def convert_wikilinks(text: str) -> str:
-    """Convert Obsidian ``[[wikilinks]]`` to plain text (internal, not useful in Confluence).
+    """Convert Obsidian ``[[wikilinks]]`` to plain text.
 
-    ``[[Page|Alias]]`` -> ``Alias``; ``[[Page#Heading]]`` -> ``Page``;
-    ``![[embed]]`` -> ``embed``. The leading ``!`` of an embed is dropped.
+    Internal links are not useful in Confluence, so they are flattened:
+    ``[[Page|Alias]]`` becomes ``Alias``; ``[[Page#Heading]]`` becomes ``Page``;
+    ``![[embed]]`` becomes ``embed`` (the leading ``!`` of an embed is dropped).
+
+    :param text: the document text.
+    :type text: str
+    :returns: the text with wikilinks reduced to plain text.
+    :rtype: str
     """
     def repl(m: re.Match) -> str:
         inner = m.group(1)
@@ -93,22 +119,39 @@ def convert_wikilinks(text: str) -> str:
 
 
 def strip_glossary_links(text: str) -> str:
-    """Remove glossary markdown links, keep the link text."""
+    """Remove glossary Markdown links, keeping the link text.
+
+    :param text: the document text.
+    :type text: str
+    :returns: the text with glossary links replaced by their label.
+    :rtype: str
+    """
     return re.sub(r'\[([^\]]+)\]\(\.\./(?:\.\./)?glossary/[^)]+\)', r'\1', text)
 
 
 def convert_internal_links(text: str) -> str:
-    """Convert remaining internal links to plain text.
+    """Convert remaining internal Markdown links to plain text.
 
-    Handles ``[t](file.md)``, ``[t](file.md#frag)`` and same-page section
-    links ``[t](#anchor)`` — none of these resolve in Confluence, which
-    generates its own heading anchors.
+    Handles ``[t](file.md)``, ``[t](file.md#frag)`` and same-page section links
+    ``[t](#anchor)`` — none of these resolve in Confluence, which generates its
+    own heading anchors.
+
+    :param text: the document text.
+    :type text: str
+    :returns: the text with internal links reduced to plain text.
+    :rtype: str
     """
     return re.sub(r'\[([^\]]+)\]\((?:[^)]*\.md(?:#[^)]*)?|#[^)]*)\)', r'\1', text)
 
 
 def escape_html(text: str) -> str:
-    """Escape HTML special chars in text content."""
+    """Escape the HTML special characters ``&`` ``<`` ``>`` in text content.
+
+    :param text: the raw text.
+    :type text: str
+    :returns: the escaped text.
+    :rtype: str
+    """
     text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
@@ -116,13 +159,18 @@ def escape_html(text: str) -> str:
 
 
 def process_inline(text: str) -> str:
-    """Process inline markdown: bold, italic, code, links. Produces well-formed XHTML.
+    """Process inline Markdown (bold, italic, code, links) into well-formed XHTML.
 
-    Code spans and links are masked BEFORE emphasis and escaping, so that
-    (a) stray ``*``/``_`` inside code (globs, regexes, generics) never create
-    crossing ``<em>`` tags, and (b) literal ``<`` ``>`` ``&`` in ordinary text are
-    escaped without corrupting the tags we generate. This is what keeps the output
-    valid Confluence storage format (XHTML).
+    Code spans and links are masked *before* emphasis and escaping, so that
+    (a) stray ``*`` / ``_`` inside code (globs, regexes, generics) never create
+    crossing ``<em>`` tags, and (b) literal ``<`` ``>`` ``&`` in ordinary text
+    are escaped without corrupting the tags being generated. This is what keeps
+    the output valid Confluence storage format.
+
+    :param text: a single line or paragraph of Markdown.
+    :type text: str
+    :returns: the inline HTML.
+    :rtype: str
     """
     text = strip_glossary_links(text)
     text = convert_wikilinks(text)
@@ -165,7 +213,13 @@ def process_inline(text: str) -> str:
 
 
 def convert_table(lines: list[str]) -> str:
-    """Convert markdown table lines to HTML table."""
+    """Convert Markdown table lines to an HTML ``<table>``.
+
+    :param lines: the table's lines, including the header and separator rows.
+    :type lines: list[str]
+    :returns: the table HTML, or an empty string if there are too few lines.
+    :rtype: str
+    """
     if len(lines) < 2:
         return ''
 
@@ -193,7 +247,14 @@ def convert_table(lines: list[str]) -> str:
 
 
 def _parse_blockquote_segments(content_lines: list[str]) -> list[tuple[str, str]]:
-    """Parse blockquote content into ``('inline', html)`` or ``('block', html)`` segments."""
+    """Split blockquote content into typed segments.
+
+    :param content_lines: the blockquote's inner lines (leading ``>`` removed).
+    :type content_lines: list[str]
+    :returns: a list of ``(kind, html)`` segments, where ``kind`` is ``'inline'``
+        or ``'block'``.
+    :rtype: list[tuple[str, str]]
+    """
     segments = []
     text_buf: list[str] = []
     i = 0
@@ -258,7 +319,20 @@ def _parse_blockquote_segments(content_lines: list[str]) -> list[tuple[str, str]
 
 
 def _render_blockquote_split(content_lines: list[str], wrapper_open: str, wrapper_close: str) -> str:
-    """Render blockquote content, pulling tables/code outside the wrapper for Confluence."""
+    """Render blockquote content, lifting tables and code outside the wrapper.
+
+    Confluence does not render block elements nested inside a ``<blockquote>``
+    well, so block segments are emitted as siblings of the quoted text.
+
+    :param content_lines: the blockquote's inner lines.
+    :type content_lines: list[str]
+    :param wrapper_open: opening markup for the first inline run.
+    :type wrapper_open: str
+    :param wrapper_close: closing markup for each inline run.
+    :type wrapper_close: str
+    :returns: the rendered HTML.
+    :rtype: str
+    """
     segments = _parse_blockquote_segments(content_lines)
     parts: list[str] = []
     inline_buf: list[str] = []
@@ -288,7 +362,15 @@ def _render_blockquote_split(content_lines: list[str], wrapper_open: str, wrappe
 
 
 def convert_list_block(lines: list[str], start: int) -> str:
-    """Convert an unordered list block to HTML."""
+    """Convert an unordered list block (with nesting) to HTML.
+
+    :param lines: all document lines.
+    :type lines: list[str]
+    :param start: index of the first list item.
+    :type start: int
+    :returns: the ``<ul>`` HTML.
+    :rtype: str
+    """
     items = []
     i = start
     while i < len(lines):
@@ -317,7 +399,15 @@ def convert_list_block(lines: list[str], start: int) -> str:
 
 
 def convert_ordered_list_block(lines: list[str], start: int) -> str:
-    """Convert an ordered list block to HTML."""
+    """Convert an ordered list block to HTML.
+
+    :param lines: all document lines.
+    :type lines: list[str]
+    :param start: index of the first list item.
+    :type start: int
+    :returns: the ``<ol>`` HTML.
+    :rtype: str
+    """
     items = []
     i = start
     while i < len(lines):
@@ -337,7 +427,18 @@ def convert_ordered_list_block(lines: list[str], start: int) -> str:
 
 
 def convert_markdown_to_html(md_text: str) -> str:
-    """Convert a Markdown document to an HTML fragment."""
+    """Convert a Markdown document to an HTML fragment.
+
+    Handles headings, paragraphs, lists, tables, blockquotes, Obsidian callouts,
+    fenced code, and Mermaid blocks. When :data:`_current_img_dir` is set,
+    Mermaid blocks are rendered to PNG; otherwise they fall back to a styled
+    block.
+
+    :param md_text: the Markdown document.
+    :type md_text: str
+    :returns: an HTML fragment (no ``<html>`` / ``<body>`` wrapper).
+    :rtype: str
+    """
     md_text = strip_glossary_links(md_text)
 
     lines = md_text.split('\n')

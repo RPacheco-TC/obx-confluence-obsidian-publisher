@@ -1,32 +1,47 @@
 #!/usr/bin/env python3
-"""confluence_publish.py — publish a folder of Markdown docs to Confluence Cloud.
+"""Publish a folder of Markdown docs to Confluence Cloud.
 
-Publishes an Obsidian-style Markdown doc set as a page tree under ONE parent page.
-Reuses md_to_confluence.py for Markdown -> HTML, then post-processes into valid
-Confluence storage format (code macros; info/note/tip/warning panels; autolink +
-ampersand fixes; [[wikilinks]] -> page links), renders Mermaid to PNG and uploads
-them as attachments, validates each body as XML, and creates or updates pages
-idempotently (matched by title).
+Publishes an Obsidian-style Markdown doc set as a page tree under one parent
+page. Reuses :mod:`md_to_confluence` for Markdown-to-HTML, then post-processes
+into valid Confluence storage format (code macros; info/note/tip/warning panels;
+autolink and ampersand fixes; ``[[wikilinks]]`` to page links), renders Mermaid
+to PNG and uploads the images as attachments, validates each body as XML, and
+creates or updates pages idempotently (matched by title).
 
-Safe by construction: it only ever creates/updates pages UNDER the parent you
-pass, and never deletes anything.
+Safe by construction: it only ever creates or updates pages *under* the parent
+you pass, and never deletes anything.
 
-Usage:
-  python3 confluence_publish.py DOCS_DIR --space KEY --parent PAGE_ID [--dry-run]
+Usage
+-----
+.. code-block:: console
 
-  DOCS_DIR   folder of "NN - Title.md" files, with an optional "In Situ/" subfolder
-  --space    Confluence space KEY (e.g. ~yourname for a personal space, or ENG)
-  --parent   ID of the page to publish everything under
-  --dry-run  print the CREATE/UPDATE plan and write nothing
+    python3 confluence_publish.py DOCS_DIR --space KEY --parent PAGE_ID [--dry-run]
 
-Credentials come from the environment only (never commit them):
-  CONFLUENCE_BASE_URL  (e.g. https://your-company.atlassian.net/wiki)
-  CONFLUENCE_EMAIL
-  CONFLUENCE_API_TOKEN
+``DOCS_DIR``
+    folder of ``NN - Title.md`` files, with an optional ``In Situ/`` subfolder.
+``--space KEY``
+    Confluence space key (``~yourname`` for a personal space, or e.g. ``ENG``).
+``--parent PAGE_ID``
+    id of the page to publish everything under.
+``--dry-run``
+    print the CREATE/UPDATE plan and write nothing.
 
-Not yet implemented (contributions welcome): a state.json page map (this matches
-by title), content-hash skip of unchanged pages, exact heading-anchor links, and
---prune of pages whose source was removed.
+Environment
+-----------
+Credentials are read from the environment only (never commit them):
+
+``CONFLUENCE_BASE_URL``
+    e.g. ``https://your-company.atlassian.net/wiki``
+``CONFLUENCE_EMAIL``
+    the Atlassian account email.
+``CONFLUENCE_API_TOKEN``
+    an API token.
+
+.. note::
+
+   Not yet implemented (contributions welcome): a ``state.json`` page map (this
+   matches by title), content-hash skip of unchanged pages, exact heading-anchor
+   links, and ``--prune`` of pages whose source was removed.
 """
 from __future__ import annotations
 import os, re, json, base64, importlib.util, pathlib, argparse
@@ -60,10 +75,18 @@ _CALLOUT_RE = re.compile(r"^>\s*\[!(\w+)\][+-]?\s*(.*)$")
 
 
 def _extract_callouts(md: str):
-    """Pull callout blocks out of the markdown, returning (md_with_tokens, macros).
+    """Pull callout blocks out of the Markdown.
 
-    Each callout becomes a Confluence panel macro; in the markdown it is replaced
-    by a placeholder paragraph the bulk converter passes through untouched."""
+    Each Obsidian callout (``> [!type] ...``) becomes a Confluence panel macro;
+    in the returned Markdown it is replaced by a placeholder paragraph that the
+    bulk converter passes through untouched.
+
+    :param md: the source Markdown.
+    :type md: str
+    :returns: a ``(markdown_with_tokens, macros)`` pair, where ``macros`` maps
+        each placeholder token to its Confluence ``ac:structured-macro`` HTML.
+    :rtype: tuple[str, dict[str, str]]
+    """
     lines = md.split("\n")
     out, macros, i = [], {}, 0
     while i < len(lines):
@@ -90,14 +113,37 @@ def _extract_callouts(md: str):
 
 
 def _fix_autolinks(html: str) -> str:
+    """Turn angle-bracket autolinks ``<http://...>`` into ``<a>`` tags.
+
+    :param html: the HTML fragment.
+    :type html: str
+    :returns: the fragment with autolinks rewritten.
+    :rtype: str
+    """
     return re.sub(r"<(https?://[^>\s]+)>", r'<a href="\1">\1</a>', html)
 
 
 def _escape_bare_amp(html: str) -> str:
+    """Escape bare ``&`` characters that are not already part of an entity.
+
+    :param html: the HTML fragment.
+    :type html: str
+    :returns: the fragment with stray ampersands escaped to ``&amp;``.
+    :rtype: str
+    """
     return re.sub(r"&(?!(?:amp|lt|gt|quot|apos|#x?[0-9a-fA-F]+);)", "&amp;", html)
 
 
 def _code_blocks_to_macro(html: str) -> str:
+    """Convert ``<pre><code>`` blocks into Confluence ``code`` macros.
+
+    The inner text is HTML-unescaped and wrapped in a ``CDATA`` section.
+
+    :param html: the HTML fragment.
+    :type html: str
+    :returns: the fragment with code blocks rewritten as code macros.
+    :rtype: str
+    """
     def repl(m):
         text = ihtml.unescape(m.group(1)).rstrip("\n")
         text = text.replace("]]>", "]]]]><![CDATA[>")  # CDATA-safe
@@ -110,7 +156,14 @@ _VALIDATE_WRAP = ('<root xmlns:ac="urn:ac" xmlns:ri="urn:ri">{}</root>')
 
 
 def validate_storage(html: str) -> None:
-    """Raise ET.ParseError with a precise location if the body is not well-formed."""
+    """Validate that a storage-format body is well-formed XML.
+
+    :param html: the Confluence storage-format fragment.
+    :type html: str
+    :raises xml.etree.ElementTree.ParseError: if the body is not well-formed
+        (the exception carries the error position).
+    :returns: ``None``.
+    """
     ET.fromstring(_VALIDATE_WRAP.format(html))
 
 
@@ -119,17 +172,34 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
 def _wikilink_macro(target_title: str, display: str) -> str:
+    """Build a Confluence ``ac:link`` that points at a page by title.
+
+    :param target_title: the exact title of the target page.
+    :type target_title: str
+    :param display: the link text to show.
+    :type display: str
+    :returns: the ``ac:link`` storage-format markup.
+    :rtype: str
+    """
     t = target_title.replace('"', "&quot;")
     return (f'<ac:link><ri:page ri:content-title="{t}" />'
             f"<ac:plain-text-link-body><![CDATA[{display}]]></ac:plain-text-link-body></ac:link>")
 
 
 def _extract_wikilinks(md: str):
-    """Replace [[Target]], [[Target#Anchor]], [[Target|alias]] with tokens + ac:link.
+    """Replace ``[[wikilinks]]`` with tokens and build their Confluence links.
 
-    Page-level links by title (the published title == the wikilink target). The
-    heading #anchor is dropped for now (Confluence heading anchors are a separate
-    scheme — D9); the link still lands on the right page."""
+    Handles ``[[Target]]``, ``[[Target#Anchor]]`` and ``[[Target|alias]]``.
+    Links are page-level (the published page title equals the wikilink target).
+    The ``#anchor`` is dropped for now — Confluence heading anchors use a
+    different scheme — so the link still lands on the right page.
+
+    :param md: the source Markdown.
+    :type md: str
+    :returns: a ``(markdown_with_tokens, links)`` pair, where ``links`` maps each
+        token to its ``ac:link`` markup.
+    :rtype: tuple[str, dict[str, str]]
+    """
     links = {}
 
     def repl(m):
@@ -151,6 +221,15 @@ _IMG_RE = re.compile(r'<img src="img/([^"]+)"[^>]*/>')
 
 
 def _images_to_attachments(html: str, img_dir):
+    """Rewrite rendered Mermaid ``<img>`` tags as Confluence ``ac:image`` macros.
+
+    :param html: the HTML fragment containing ``<img src="img/NAME.png">`` tags.
+    :type html: str
+    :param img_dir: directory the referenced PNG files live in.
+    :returns: a ``(html, attachments)`` pair, where ``attachments`` is a list of
+        ``(filename, filepath)`` tuples to upload.
+    :rtype: tuple[str, list[tuple[str, str]]]
+    """
     names = []
 
     def repl(m):
@@ -163,9 +242,22 @@ def _images_to_attachments(html: str, img_dir):
 
 
 def md_to_storage(md: str, img_dir=None):
-    """Markdown -> (storage XHTML, [(attachment_filename, filepath), ...]).
+    """Convert Markdown to a Confluence storage-format body and its attachments.
 
-    img_dir, when given, is where Mermaid PNGs are rendered (and uploaded from)."""
+    Runs the bulk converter, then applies the storage-format transforms (callout
+    panels, wikilink page-links, code macros, autolink and ampersand fixes) and
+    validates the result as XML.
+
+    :param md: the source Markdown.
+    :type md: str
+    :param img_dir: where to render Mermaid PNGs (and upload them from); pass
+        ``None`` to skip diagram rendering.
+    :returns: a ``(storage_xhtml, attachments)`` pair, where ``attachments`` is
+        a list of ``(filename, filepath)`` tuples.
+    :rtype: tuple[str, list[tuple[str, str]]]
+    :raises xml.etree.ElementTree.ParseError: if the produced body is not
+        well-formed.
+    """
     md = mdc.strip_frontmatter(md)
     md, links = _extract_wikilinks(md)        # before conversion (converter flattens them)
     md, macros = _extract_callouts(md)
@@ -194,16 +286,36 @@ def md_to_storage(md: str, img_dir=None):
 # --------------------------------------------------------------------------- #
 
 def _cfg():
+    """Read the Confluence credentials from the environment.
+
+    :returns: a ``(base_url, email, api_token)`` tuple.
+    :rtype: tuple[str, str, str]
+    :raises KeyError: if a required environment variable is unset.
+    """
     return (os.environ["CONFLUENCE_BASE_URL"].rstrip("/"),
             os.environ["CONFLUENCE_EMAIL"], os.environ["CONFLUENCE_API_TOKEN"])
 
 
 def _auth_header():
+    """Build the HTTP Basic ``Authorization`` header value from the credentials.
+
+    :returns: the ``Basic <base64>`` header value.
+    :rtype: str
+    """
     _, email, token = _cfg()
     return "Basic " + base64.b64encode(f"{email}:{token}".encode()).decode()
 
 
 def _req(method, url, data=None, headers=None):
+    """Make an authenticated request to the Confluence REST API.
+
+    :param method: the HTTP method (``GET``, ``POST``, ``PUT``).
+    :param url: the absolute request URL.
+    :param data: the raw request body, or ``None``.
+    :param headers: extra request headers to merge in, or ``None``.
+    :returns: a ``(status_code, parsed_json)`` pair (``{}`` if the body is empty).
+    :rtype: tuple[int, dict]
+    """
     h = {"Authorization": _auth_header(), "Accept": "application/json"}
     if headers:
         h.update(headers)
@@ -214,11 +326,26 @@ def _req(method, url, data=None, headers=None):
 
 
 def get_page(page_id):
+    """Fetch a page, including its storage-format body.
+
+    :param page_id: the page id.
+    :returns: the page object.
+    :rtype: dict
+    """
     base, *_ = _cfg()
     return _req("GET", f"{base}/api/v2/pages/{page_id}?body-format=storage")[1]
 
 
 def create_page(space_id, parent_id, title, storage):
+    """Create a page under a parent.
+
+    :param space_id: numeric space id.
+    :param parent_id: id of the parent page.
+    :param title: the new page title.
+    :param storage: the storage-format body.
+    :returns: the created page object.
+    :rtype: dict
+    """
     base, *_ = _cfg()
     payload = {"spaceId": space_id, "status": "current", "title": title,
                "parentId": parent_id,
@@ -228,6 +355,15 @@ def create_page(space_id, parent_id, title, storage):
 
 
 def update_page(page_id, title, storage, version_message=""):
+    """Update a page's body, bumping its version number.
+
+    :param page_id: the page id.
+    :param title: the page title.
+    :param storage: the new storage-format body.
+    :param version_message: an optional version comment.
+    :returns: the updated page object.
+    :rtype: dict
+    """
     base, *_ = _cfg()
     cur = get_page(page_id)
     payload = {"id": str(page_id), "status": "current", "title": title,
@@ -238,7 +374,20 @@ def update_page(page_id, title, storage, version_message=""):
 
 
 def upload_attachment(page_id, filepath, filename):
-    """v1 multipart attachment upload (re-upload to same filename updates in place)."""
+    """Upload a local file as a page attachment (v1 multipart endpoint).
+
+    .. warning::
+
+       Re-uploading an existing filename returns HTTP 400, so callers should
+       skip filenames already present on the page (see
+       :func:`existing_attachment_names`).
+
+    :param page_id: the page id.
+    :param filepath: path to the local file.
+    :param filename: the attachment filename to use.
+    :returns: the API response object.
+    :rtype: dict
+    """
     base, *_ = _cfg()
     boundary = "----confluencepublishboundary"
     data = pathlib.Path(filepath).read_bytes()
@@ -254,7 +403,15 @@ def upload_attachment(page_id, filepath, filename):
 
 
 def existing_attachment_names(page_id):
-    """Filenames already attached to a page (so we skip re-uploading content-hashed PNGs)."""
+    """List the filenames already attached to a page.
+
+    Used to skip re-uploading content-hashed PNGs, which would otherwise return
+    HTTP 400 for a duplicate filename.
+
+    :param page_id: the page id.
+    :returns: the set of attachment filenames.
+    :rtype: set[str]
+    """
     base, *_ = _cfg()
     try:
         _, d = _req("GET", f"{base}/api/v2/pages/{page_id}/attachments?limit=250")
@@ -264,6 +421,13 @@ def existing_attachment_names(page_id):
 
 
 def find_page_id_by_title(space_id, title):
+    """Find a page id by exact title within a space.
+
+    :param space_id: numeric space id.
+    :param title: the exact page title to match.
+    :returns: the page id, or ``None`` if no page has that title.
+    :rtype: str | None
+    """
     base, *_ = _cfg()
     _, d = _req("GET", f"{base}/api/v2/spaces/{space_id}/pages?limit=250")
     for p in d.get("results", []):
@@ -273,7 +437,13 @@ def find_page_id_by_title(space_id, title):
 
 
 def resolve_space_id(space_key):
-    """Resolve a space KEY (e.g. ~yourname or ENG) to its numeric space id."""
+    """Resolve a space key to its numeric space id.
+
+    :param space_key: the space key (e.g. ``~yourname`` or ``ENG``).
+    :returns: the numeric space id.
+    :rtype: str
+    :raises SystemExit: if no space matches the key.
+    """
     base, *_ = _cfg()
     _, d = _req("GET", f"{base}/api/v2/spaces?keys={urllib.parse.quote(space_key)}")
     results = d.get("results", [])
@@ -283,7 +453,20 @@ def resolve_space_id(space_key):
 
 
 def publish_page(space_id, parent_id, title, md, img_dir, dry_run=False):
-    """Idempotent create/update of one page + upload of its rendered diagrams."""
+    """Create or update one page and upload its rendered diagrams.
+
+    The body is always converted and validated first, so errors surface early.
+
+    :param space_id: numeric space id.
+    :param parent_id: id of the parent page (used only when creating).
+    :param title: the page title.
+    :param md: the source Markdown.
+    :param img_dir: where to render Mermaid PNGs.
+    :param dry_run: when ``True``, resolve the action but write nothing.
+    :returns: an ``(action, page_id, attachments)`` tuple, where ``action`` is
+        ``"CREATE"`` or ``"UPDATE"``.
+    :rtype: tuple[str, str | None, list]
+    """
     html, atts = md_to_storage(md, img_dir)   # always convert + validate (catches errors early)
     pid = find_page_id_by_title(space_id, title)
     action = "UPDATE" if pid else "CREATE"
@@ -302,8 +485,20 @@ def publish_page(space_id, parent_id, title, md, img_dir, dry_run=False):
 
 
 def publish_set(regen_dir, space_id, parent_id, img_dir, dry_run=False):
-    """Publish a whole doc-set folder: numbered pages under the parent, In Situ
-    docs under an 'In Situ' container page. Idempotent (create-or-update by title)."""
+    """Publish a whole doc-set folder.
+
+    Numbered ``NN - Title.md`` pages go directly under the parent; docs in an
+    ``In Situ/`` subfolder go under an ``In Situ`` container page. Idempotent
+    (create-or-update by title).
+
+    :param regen_dir: the doc-set folder.
+    :param space_id: numeric space id.
+    :param parent_id: id of the parent page.
+    :param img_dir: where to render Mermaid PNGs.
+    :param dry_run: when ``True``, write nothing.
+    :returns: a list of ``(title, action, diagram_count)`` tuples.
+    :rtype: list[tuple[str, str, int]]
+    """
     regen = pathlib.Path(regen_dir)
     report = []
     for f in sorted(regen.glob("*.md")):                     # 00..NN top-level
@@ -328,6 +523,11 @@ def publish_set(regen_dir, space_id, parent_id, img_dir, dry_run=False):
 # --------------------------------------------------------------------------- #
 
 def main():
+    """Parse arguments, resolve the space, and publish the doc set.
+
+    :raises SystemExit: on missing credentials, a bad docs folder, or an unknown
+        space key.
+    """
     ap = argparse.ArgumentParser(
         description="Publish a folder of Markdown docs to Confluence Cloud under one parent page.")
     ap.add_argument("docs_dir", help='folder of "NN - Title.md" docs (optional "In Situ/" subfolder)')
