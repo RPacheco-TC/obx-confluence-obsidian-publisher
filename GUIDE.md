@@ -176,9 +176,12 @@ set -a; . ./.env; set +a   # load into the shell — never commit .env
 
 The base URL for Confluence Cloud ends in `/wiki`, for example `https://your-company.atlassian.net/wiki`.
 
-### Step 2 — Choose the space and parent page
+### Step 2 — Choose the space and create a parent PAGE
 
-You give the publisher two things: a **space key** and a **parent page id**. Everything is published as children of that one page, and nothing else in the space is ever touched.
+> [!important] You must publish under a PAGE, not a folder
+> The tool places all the docs as **children of one Confluence page** that you choose. You have to **create (or pick) a real page** to act as the parent and pass its page id with `--parent`. A Confluence **folder cannot be the target** — the API does not reliably support publishing under folders. You may still keep your parent page *inside* a folder for tidiness; the tool addresses the page, and the folder is just a wrapper around it.
+
+You give the publisher two things: a **space key** and that **parent page id**. Everything is published as children of that one page, and nothing else in the space is ever touched.
 
 **Find the space key.** Open the target space in Confluence and look at the URL:
 
@@ -197,9 +200,6 @@ https://your-company.atlassian.net/wiki/spaces/DOCS/pages/123456789/Service+X+Do
 ```
 
 That number is the `--parent` value.
-
-> [!note] Spaces, pages, and folders
-> The publisher always targets a **page** as the parent (you pass its page id). If you want the docs to sit inside a Confluence **folder** for tidiness, that is fine: create the folder in your space, create your parent page *inside* the folder, and pass that page's id. The tool addresses the page, not the folder — so the folder is just an organizational wrapper.
 
 > [!tip] Test in your personal space first
 > Before publishing to a shared space, do a trial run in your **personal space** (its key starts with `~`) or a throwaway space — it is private and risk-free. When it looks right, repoint at the real space and parent by simply changing `--space` and `--parent`.

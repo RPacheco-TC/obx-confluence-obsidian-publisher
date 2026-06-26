@@ -69,7 +69,7 @@ The base URL for Confluence Cloud ends in `/wiki`, for example `https://your-com
 The tool publishes everything under **one parent page** you specify, and never touches anything outside it. You need two values:
 
 - **Space key** — the part after `/spaces/` in the URL: `…/wiki/spaces/`**`DOCS`**`/…`. A team space has a short key like `DOCS` or `ENG`; a personal space key starts with `~`.
-- **Parent page id** — create one page in that space to hold the docs (you need permission to add pages there), then copy its id from the URL: `…/pages/`**`123456789`**`/…`.
+- **Parent page id** — you must create a **page** (not a folder) in that space to hold the docs; everything is published as children of it. Create it (you need permission to add pages there), then copy its id from the URL: `…/pages/`**`123456789`**`/…`. You can keep that page inside a Confluence folder for tidiness; the tool still targets the page.
 
 Tip: trial it in your **personal space** (`~yourname`) first, then repoint at the team space by changing `--space` and `--parent`.
 
