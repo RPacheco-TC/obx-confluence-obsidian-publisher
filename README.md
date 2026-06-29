@@ -73,17 +73,31 @@ The tool publishes everything under **one parent page** you specify, and never t
 
 Tip: trial it in your **personal space** (`~yourname`) first, then repoint at the team space by changing `--space` and `--parent`.
 
-### 3. Dry-run, then publish
+### 3. Pick a unique prefix (when sharing a space)
+
+**Confluence page titles must be unique within a space** — you cannot have two pages with the same title in one space. If you publish more than one repo's docs into the same (shared) space, generic titles like `01 - Welcome and Quick Start` or `In Situ` collide and the second publish fails with `HTTP 400`.
+
+Use `--prefix <id>` (typically the repo name) to namespace every page title. It is applied **at publish time only** — your Markdown stays clean — and re-publishing with the same prefix updates the same pages, so it remains idempotent.
+
+```
+--prefix langflow   →   "langflow - 01 - Welcome and Quick Start", "langflow - In Situ", …
+```
+
+A prefix is optional in your own personal space (nothing else shares it) but recommended everywhere else.
+
+Your Obsidian `[[wikilinks]]` keep working both ways: the files keep their original names (so Obsidian navigation is unchanged), and at publish time each link's **target** is prefixed to match the published page title — so cross-page links in Confluence resolve to the prefixed pages, while the visible link text stays the natural name.
+
+### 4. Dry-run, then publish
 
 ```bash
 # See exactly what would happen — writes nothing:
-python3 confluence_publish.py my-repo-docs --space DOCS --parent 123456789 --dry-run
+python3 confluence_publish.py my-repo-docs --space DOCS --parent 123456789 --prefix langflow --dry-run
 
 # Publish for real:
-python3 confluence_publish.py my-repo-docs --space DOCS --parent 123456789
+python3 confluence_publish.py my-repo-docs --space DOCS --parent 123456789 --prefix langflow
 ```
 
-The tool prints a per-page plan (`CREATE` / `UPDATE`) and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run repeatedly.
+The tool prints a per-page plan (`CREATE` / `UPDATE`, with the actual prefixed titles) and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run repeatedly.
 
 ### What it produces
 
@@ -107,6 +121,27 @@ The publisher is non-destructive by construction:
 The worst realistic failure is a mis-formatted page under your own parent, which you can edit or delete.
 
 ---
+
+## Troubleshooting
+
+**`HTTP Error 400` on publish (but `--dry-run` was fine).**
+The dry-run never exercises the write path, so a problem only surfaces on the real publish. The tool now prints Confluence's own reason. The usual causes:
+
+- **Duplicate page title.** Titles must be unique within a space (see [step 3](#3-pick-a-unique-prefix-when-sharing-a-space)). Publish each repo with a distinct `--prefix`. If two files *in your own doc set* collide, the tool stops before contacting Confluence and names the file to rename.
+- **`--parent` is not a page in that space.** The parent must be a real **page** (URL shape `…/pages/<id>/<slug>`), and it must live in the `--space` you passed — not a folder, and not a page in another space.
+
+**`ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED` on macOS.**
+This happens with the **python.org** build of Python, which ships its own CA bundle that isn't installed by default (Apple's `/usr/bin/python3` is unaffected). Fix it once:
+
+```bash
+# Run the installer that ships with python.org Python (adjust the version):
+/Applications/Python\ 3.12/Install\ Certificates.command
+
+# …or, equivalently:
+/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m pip install --upgrade certifi
+```
+
+Verify with: `python3 -c "import urllib.request; urllib.request.urlopen('https://www.atlassian.com'); print('TLS OK')"`. Do **not** work around this by disabling certificate verification — that removes the security the check provides.
 
 ## Status and roadmap
 

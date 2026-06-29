@@ -186,16 +186,24 @@ def _wikilink_macro(target_title: str, display: str) -> str:
             f"<ac:plain-text-link-body><![CDATA[{display}]]></ac:plain-text-link-body></ac:link>")
 
 
-def _extract_wikilinks(md: str):
+def _extract_wikilinks(md: str, prefix: str = ""):
     """Replace ``[[wikilinks]]`` with tokens and build their Confluence links.
 
     Handles ``[[Target]]``, ``[[Target#Anchor]]`` and ``[[Target|alias]]``.
-    Links are page-level (the published page title equals the wikilink target).
-    The ``#anchor`` is dropped for now — Confluence heading anchors use a
-    different scheme — so the link still lands on the right page.
+    Links are page-level: the link points at a page *by title*, and the published
+    page title is the prefixed title (see :func:`prefixed_title`). So the link
+    target must be prefixed too — otherwise a link written in Obsidian as
+    ``[[01 - Foo]]`` would point at a non-existent page ``01 - Foo`` instead of
+    the published ``<prefix> - 01 - Foo``. The *display* text is left unprefixed,
+    so readers still see the natural name. The ``#anchor`` is dropped for now —
+    Confluence heading anchors use a different scheme — so the link still lands
+    on the right page.
 
     :param md: the source Markdown.
     :type md: str
+    :param prefix: namespacing prefix applied to each link target, matching the
+        prefix used when publishing the pages.
+    :type prefix: str
     :returns: a ``(markdown_with_tokens, links)`` pair, where ``links`` maps each
         token to its ``ac:link`` markup.
     :rtype: tuple[str, dict[str, str]]
@@ -210,7 +218,7 @@ def _extract_wikilinks(md: str):
         target = content.split("#", 1)[0].strip()
         display = alias if alias else content
         token = f"xLINK{len(links)}x"
-        links[token] = _wikilink_macro(target, display)
+        links[token] = _wikilink_macro(prefixed_title(prefix, target), display)
         return token
 
     return _WIKILINK_RE.sub(repl, md), links
@@ -241,7 +249,7 @@ def _images_to_attachments(html: str, img_dir):
     return html, atts
 
 
-def md_to_storage(md: str, img_dir=None):
+def md_to_storage(md: str, img_dir=None, prefix=""):
     """Convert Markdown to a Confluence storage-format body and its attachments.
 
     Runs the bulk converter, then applies the storage-format transforms (callout
@@ -252,6 +260,9 @@ def md_to_storage(md: str, img_dir=None):
     :type md: str
     :param img_dir: where to render Mermaid PNGs (and upload them from); pass
         ``None`` to skip diagram rendering.
+    :param prefix: namespacing prefix applied to wikilink targets so internal
+        links resolve to the prefixed published page titles.
+    :type prefix: str
     :returns: a ``(storage_xhtml, attachments)`` pair, where ``attachments`` is
         a list of ``(filename, filepath)`` tuples.
     :rtype: tuple[str, list[tuple[str, str]]]
@@ -259,7 +270,7 @@ def md_to_storage(md: str, img_dir=None):
         well-formed.
     """
     md = mdc.strip_frontmatter(md)
-    md, links = _extract_wikilinks(md)        # before conversion (converter flattens them)
+    md, links = _extract_wikilinks(md, prefix)   # before conversion (converter flattens them)
     md, macros = _extract_callouts(md)
     prev_dir, prev_rel = mdc._current_img_dir, mdc._current_img_rel
     if img_dir is not None:
@@ -320,9 +331,21 @@ def _req(method, url, data=None, headers=None):
     if headers:
         h.update(headers)
     r = urllib.request.Request(url, data=data, headers=h, method=method)
-    with urllib.request.urlopen(r, timeout=60) as resp:
-        body = resp.read().decode()
-        return resp.status, (json.loads(body) if body else {})
+    try:
+        with urllib.request.urlopen(r, timeout=60) as resp:
+            body = resp.read().decode()
+            return resp.status, (json.loads(body) if body else {})
+    except urllib.error.HTTPError as e:
+        # Confluence puts the real reason (e.g. "parent is not a page") in the
+        # response body, which urllib hides behind a bare "HTTP Error 400".
+        # Stash it on the exception and re-raise so callers that catch
+        # HTTPError (e.g. existing_attachment_names) keep working, while
+        # main() can print the detail.
+        try:
+            e.detail = e.read().decode(errors="replace")
+        except Exception:
+            e.detail = ""
+        raise
 
 
 def get_page(page_id):
@@ -420,8 +443,34 @@ def existing_attachment_names(page_id):
     return {a.get("title") for a in d.get("results", [])}
 
 
+def _iter_pages(url):
+    """Yield every item of a paginated v2 collection, following ``_links.next``.
+
+    The Confluence v2 API returns results one page at a time with a cursor in
+    ``_links.next``; reading only the first page silently misses everything
+    beyond it. ``next`` is a path relative to the host, so it is joined onto the
+    configured base URL.
+
+    :param url: the absolute URL of the first page of results.
+    :returns: an iterator over all result objects across every page.
+    :rtype: Iterator[dict]
+    """
+    base, *_ = _cfg()
+    while url:
+        _, d = _req("GET", url)
+        for item in d.get("results", []):
+            yield item
+        nxt = d.get("_links", {}).get("next")
+        url = urllib.parse.urljoin(base, nxt) if nxt else None
+
+
 def find_page_id_by_title(space_id, title):
     """Find a page id by exact title within a space.
+
+    Pages through *all* results (not just the first 250), so an existing page is
+    reliably matched no matter how large the space — which is what keeps
+    re-publishing idempotent and prevents a spurious ``CREATE`` (and its HTTP
+    400) when a same-titled page already exists.
 
     :param space_id: numeric space id.
     :param title: the exact page title to match.
@@ -429,8 +478,7 @@ def find_page_id_by_title(space_id, title):
     :rtype: str | None
     """
     base, *_ = _cfg()
-    _, d = _req("GET", f"{base}/api/v2/spaces/{space_id}/pages?limit=250")
-    for p in d.get("results", []):
+    for p in _iter_pages(f"{base}/api/v2/spaces/{space_id}/pages?limit=250"):
         if p.get("title") == title:
             return p["id"]
     return None
@@ -452,30 +500,50 @@ def resolve_space_id(space_key):
     return results[0]["id"]
 
 
-def publish_page(space_id, parent_id, title, md, img_dir, dry_run=False):
+def prefixed_title(prefix, title):
+    """Prepend the namespacing prefix to a page title, if one was given.
+
+    Confluence page titles must be unique *within a space*, so publishing several
+    repos' docs into one shared space requires a per-repo prefix to avoid
+    collisions. The prefix is applied uniformly to every title — including the
+    ``In Situ`` container — and to the title used for the idempotent lookup, so
+    re-publishing the same set keeps matching the same pages.
+
+    :param prefix: the namespacing prefix (e.g. ``langflow``), or ``""`` for none.
+    :param title: the bare page title (the Markdown filename stem).
+    :returns: ``"<prefix> - <title>"`` when a prefix is set, else ``title``.
+    :rtype: str
+    """
+    return f"{prefix} - {title}" if prefix else title
+
+
+def publish_page(space_id, parent_id, title, md, img_dir, dry_run=False, prefix=""):
     """Create or update one page and upload its rendered diagrams.
 
     The body is always converted and validated first, so errors surface early.
 
     :param space_id: numeric space id.
     :param parent_id: id of the parent page (used only when creating).
-    :param title: the page title.
+    :param title: the bare page title (prefix is applied internally).
     :param md: the source Markdown.
     :param img_dir: where to render Mermaid PNGs.
     :param dry_run: when ``True``, resolve the action but write nothing.
+    :param prefix: namespacing prefix prepended to the title (see
+        :func:`prefixed_title`).
     :returns: an ``(action, page_id, attachments)`` tuple, where ``action`` is
         ``"CREATE"`` or ``"UPDATE"``.
     :rtype: tuple[str, str | None, list]
     """
-    html, atts = md_to_storage(md, img_dir)   # always convert + validate (catches errors early)
-    pid = find_page_id_by_title(space_id, title)
+    full_title = prefixed_title(prefix, title)
+    html, atts = md_to_storage(md, img_dir, prefix)   # convert + validate; prefix wikilink targets
+    pid = find_page_id_by_title(space_id, full_title)
     action = "UPDATE" if pid else "CREATE"
     if dry_run:
         return action, pid, atts
     if pid:
-        update_page(pid, title, html, "republish")
+        update_page(pid, full_title, html, "republish")
     else:
-        pid = create_page(space_id, parent_id, title, html)["id"]
+        pid = create_page(space_id, parent_id, full_title, html)["id"]
     existing = existing_attachment_names(pid) if atts else set()
     for fn, fp in atts:                       # attach AFTER the page exists
         if fn in existing:                    # content-hashed name already present -> identical, skip
@@ -484,37 +552,59 @@ def publish_page(space_id, parent_id, title, md, img_dir, dry_run=False):
     return action, pid, atts
 
 
-def publish_set(regen_dir, space_id, parent_id, img_dir, dry_run=False):
+def find_insitu_dir(regen):
+    """Return the ``In Situ`` subfolder, matched case-insensitively, or ``None``.
+
+    The deep-dive folder is canonically named ``In Situ``, but matching it
+    exactly would silently skip the whole folder if the generator produced a
+    slightly different casing/spacing (e.g. ``in situ``). Matching loosely makes
+    sure those pages still get published.
+
+    :param regen: the doc-set folder.
+    :returns: the matching subfolder path, or ``None`` if there is none.
+    :rtype: pathlib.Path | None
+    """
+    if not regen.is_dir():
+        return None
+    return next((d for d in sorted(regen.iterdir())
+                 if d.is_dir() and d.name.strip().casefold() == "in situ"), None)
+
+
+def publish_set(regen_dir, space_id, parent_id, img_dir, dry_run=False, prefix=""):
     """Publish a whole doc-set folder.
 
     Numbered ``NN - Title.md`` pages go directly under the parent; docs in an
     ``In Situ/`` subfolder go under an ``In Situ`` container page. Idempotent
-    (create-or-update by title).
+    (create-or-update by title). When ``prefix`` is set, every page title is
+    namespaced so multiple repos can share one space without title collisions.
 
     :param regen_dir: the doc-set folder.
     :param space_id: numeric space id.
     :param parent_id: id of the parent page.
     :param img_dir: where to render Mermaid PNGs.
     :param dry_run: when ``True``, write nothing.
-    :returns: a list of ``(title, action, diagram_count)`` tuples.
+    :param prefix: namespacing prefix prepended to every page title.
+    :returns: a list of ``(title, action, diagram_count)`` tuples, where ``title``
+        is the actual (prefixed) Confluence page title.
     :rtype: list[tuple[str, str, int]]
     """
     regen = pathlib.Path(regen_dir)
     report = []
     for f in sorted(regen.glob("*.md")):                     # 00..NN top-level
-        action, pid, atts = publish_page(space_id, parent_id, f.stem, f.read_text(), img_dir, dry_run)
-        report.append((f.stem, action, len(atts)))
-    insitu = regen / "In Situ"
-    if insitu.is_dir():
-        cid = find_page_id_by_title(space_id, "In Situ")
+        action, pid, atts = publish_page(space_id, parent_id, f.stem, f.read_text(), img_dir, dry_run, prefix)
+        report.append((prefixed_title(prefix, f.stem), action, len(atts)))
+    insitu = find_insitu_dir(regen)
+    if insitu is not None:
+        insitu_title = prefixed_title(prefix, "In Situ")
+        cid = find_page_id_by_title(space_id, insitu_title)
+        container_action = "UPDATE" if cid else "CREATE"
         if not cid and not dry_run:
-            cid = create_page(space_id, parent_id, "In Situ",
+            cid = create_page(space_id, parent_id, insitu_title,
                               "<p>Stack-specific deep-dive docs for this repository.</p>")["id"]
-        if not cid:
-            report.append(("In Situ", "CREATE", 0))          # container page would be created
+        report.append((insitu_title, container_action, 0))   # always show the container in the plan
         for f in sorted(insitu.glob("*.md")):
-            action, pid, atts = publish_page(space_id, cid or parent_id, f.stem, f.read_text(), img_dir, dry_run)
-            report.append(("In Situ/" + f.stem, action, len(atts)))
+            action, pid, atts = publish_page(space_id, cid or parent_id, f.stem, f.read_text(), img_dir, dry_run, prefix)
+            report.append((prefixed_title(prefix, f.stem), action, len(atts)))
     return report
 
 
@@ -535,6 +625,10 @@ def main():
     ap.add_argument("--parent", required=True, help="ID of the parent page to publish under")
     ap.add_argument("--img-dir", default=None,
                     help="where to render Mermaid PNGs (default: <docs_dir>/.img)")
+    ap.add_argument("--prefix", default="",
+                    help="unique identifier prepended to every page title "
+                         '(e.g. "langflow" -> "langflow - 01 - Overview"); use a '
+                         "distinct value per repo so docs sharing a space never collide")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the CREATE/UPDATE plan and write nothing")
     args = ap.parse_args()
@@ -546,15 +640,53 @@ def main():
     if not pathlib.Path(args.docs_dir).is_dir():
         raise SystemExit(f"Not a folder: {args.docs_dir}")
 
+    # Pre-flight: Confluence page titles must be unique within a space, so two
+    # source docs that resolve to the same title would make the second CREATE
+    # fail with HTTP 400. The title is the filename stem (no prefix), for both
+    # top-level docs and "In Situ/" docs, plus the "In Situ" container page.
+    docs = pathlib.Path(args.docs_dir)
+    titles = [f.stem for f in docs.glob("*.md")]
+    insitu = find_insitu_dir(docs)
+    if insitu is not None:
+        titles.append("In Situ")
+        titles += [f.stem for f in insitu.glob("*.md")]
+    dupes = sorted({t for t in titles if titles.count(t) > 1})
+    if dupes:
+        raise SystemExit(
+            "Duplicate page title(s) in this doc set — Confluence requires titles "
+            "to be unique within a space:\n"
+            + "\n".join(f"  - {t!r}" for t in dupes)
+            + "\nRename the colliding file(s) so every page has a distinct title."
+        )
+
     space_id = resolve_space_id(args.space)
     img_dir = args.img_dir or str(pathlib.Path(args.docs_dir) / ".img")
-    report = publish_set(args.docs_dir, space_id, args.parent, img_dir, dry_run=args.dry_run)
+    try:
+        report = publish_set(args.docs_dir, space_id, args.parent, img_dir,
+                             dry_run=args.dry_run, prefix=args.prefix)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            hint = (f"A 404 means --parent {args.parent} does not exist — check the "
+                    f"page id, and that it lives in space {args.space!r}.")
+        elif e.code == 400:
+            hint = (f"A 400 on CREATE usually means --parent {args.parent} is a folder "
+                    f"(not a page) or lives in a space other than {args.space!r}, or a "
+                    f"page with this title already exists in the space.")
+        else:
+            hint = "Check the credentials, space key, and parent page id."
+        raise SystemExit(
+            f"\nConfluence rejected the request:\n"
+            f"  {e.code} {e.reason}\n"
+            f"  {getattr(e, 'detail', '') or '(no detail returned)'}\n\n"
+            f"{hint}"
+        ) from None
 
     print(f"\n{'ACTION':7} {'DIAGRAMS':8} TITLE")
     for title, action, n in report:
         print(f"{action:7} {n:<8} {title}")
     mode = "DRY-RUN (nothing written)" if args.dry_run else "published"
-    print(f"\n{len(report)} pages {mode} — space {args.space}, parent {args.parent}")
+    prefix_note = f", prefix {args.prefix!r}" if args.prefix else ""
+    print(f"\n{len(report)} pages {mode} — space {args.space}, parent {args.parent}{prefix_note}")
 
 
 if __name__ == "__main__":

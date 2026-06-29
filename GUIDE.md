@@ -204,16 +204,38 @@ That number is the `--parent` value.
 > [!tip] Test in your personal space first
 > Before publishing to a shared space, do a trial run in your **personal space** (its key starts with `~`) or a throwaway space — it is private and risk-free. When it looks right, repoint at the real space and parent by simply changing `--space` and `--parent`.
 
-### Step 3 — Dry-run, then publish
+### Step 3 — Choose a unique prefix (per repo)
+
+> [!important] Confluence page titles must be unique **within a space**
+> You cannot have two pages with the same title in the same space — not even two. So if you publish more than one repo's docs into a **shared** space, generic titles like `01 - Welcome and Quick Start` or `In Situ` will collide, and the second publish fails with `HTTP 400`.
+
+The fix is `--prefix`: a short unique identifier (usually the repo name) that the publisher prepends to **every** page title. Pick a distinct value per repo:
+
+| Repo | `--prefix` | Resulting page titles |
+| ---- | ---------- | --------------------- |
+| langflow | `langflow` | `langflow - 01 - Welcome…`, `langflow - In Situ`, … |
+| my-api   | `my-api`   | `my-api - 01 - Welcome…`, `my-api - In Situ`, … |
+
+Notes:
+- The prefix is applied at **publish time only** — your Markdown files and Obsidian vault stay clean and unprefixed. The Markdown remains the source of truth.
+- **Cross-page `[[wikilinks]]` keep working.** At publish time the link *target* is prefixed to match the published page title (the visible link text stays the natural name), so links between docs — including links to `In Situ` pages — resolve correctly in Confluence. Because the files themselves are not renamed, Obsidian's own navigation is unaffected.
+- Re-publishing with the **same** prefix updates the same pages in place (the create-or-update match uses the prefixed title), so it stays idempotent.
+- If you change the prefix later, the next publish creates a **new** set of pages under the new titles rather than renaming the old ones.
+- Publishing into your **own personal space** (`~yourname`)? A prefix is optional there, since nothing else shares that space — but it is harmless to use one.
+
+### Step 4 — Dry-run, then publish
 ```bash
 # Preview the plan — writes nothing:
-python3 confluence_publish.py "/path/to/my-repo-docs" --space DOCS --parent 123456789 --dry-run
+python3 confluence_publish.py "/path/to/my-repo-docs" --space DOCS --parent 123456789 --prefix langflow --dry-run
 
 # Publish for real:
-python3 confluence_publish.py "/path/to/my-repo-docs" --space DOCS --parent 123456789
+python3 confluence_publish.py "/path/to/my-repo-docs" --space DOCS --parent 123456789 --prefix langflow
 ```
 
-Use your team space key (e.g. `DOCS`) for real publishing, or `--space "~yourname"` to trial it in your personal space first. You will see a per-page `CREATE` / `UPDATE` plan and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run again after editing the Markdown.
+Use your team space key (e.g. `DOCS`) for real publishing, or `--space "~yourname"` to trial it in your personal space first. You will see a per-page `CREATE` / `UPDATE` plan (showing the actual prefixed titles) and how many diagrams each page carries. Re-running updates the same pages in place (matched by title), so it is safe to run again after editing the Markdown.
+
+> [!note] Two collisions, two safeguards
+> If two source files in **your own folder** resolve to the same title, the publisher stops *before* contacting Confluence and tells you which file to rename. If a title collides with a page **already in the space**, Confluence's own `400` reason is now printed in full — and `--prefix` is the way to avoid it.
 
 ### What lands in Confluence
 - The numbered docs become **child pages** of your parent page; the `In Situ/` folder becomes an `In Situ` page with the deep-dives beneath it.
@@ -226,4 +248,4 @@ Use your team space key (e.g. `DOCS`) for real publishing, or `--space "~yournam
 
 ## In one sentence
 
-**Generate:** install Claude Code and Obsidian, copy `template.yaml` next to your repo, paste the generation prompt into Claude Code with your two paths filled in, and review the result in Obsidian. **Publish:** set your three Confluence credentials in `.env`, then run `confluence_publish.py <docs-folder> --space KEY --parent PAGE_ID` (try `--dry-run` first).
+**Generate:** install Claude Code and Obsidian, copy `template.yaml` next to your repo, paste the generation prompt into Claude Code with your two paths filled in, and review the result in Obsidian. **Publish:** set your three Confluence credentials in `.env`, then run `confluence_publish.py <docs-folder> --space KEY --parent PAGE_ID --prefix <repo-name>` (try `--dry-run` first; the `--prefix` keeps each repo's titles unique in a shared space).
