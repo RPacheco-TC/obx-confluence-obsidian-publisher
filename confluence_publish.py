@@ -199,6 +199,10 @@ def _extract_wikilinks(md: str, prefix: str = ""):
     Confluence heading anchors use a different scheme — so the link still lands
     on the right page.
 
+    Wikilinks inside fenced code blocks are intentionally left untouched. They
+    are source code examples, not document navigation, and converting them to
+    storage macros can break XML validation after code-block CDATA wrapping.
+
     :param md: the source Markdown.
     :type md: str
     :param prefix: namespacing prefix applied to each link target, matching the
@@ -221,7 +225,16 @@ def _extract_wikilinks(md: str, prefix: str = ""):
         links[token] = _wikilink_macro(prefixed_title(prefix, target), display)
         return token
 
-    return _WIKILINK_RE.sub(repl, md), links
+    out = []
+    in_fence = False
+    for line in md.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        out.append(line if in_fence else _WIKILINK_RE.sub(repl, line))
+
+    return "".join(out), links
 
 
 # --- rendered mermaid <img> -> attachment + ac:image -----------------------
