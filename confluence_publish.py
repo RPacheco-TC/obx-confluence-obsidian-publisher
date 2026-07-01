@@ -112,6 +112,37 @@ def _extract_callouts(md: str):
     return "\n".join(out), macros
 
 
+# A standalone ``[[TOC]]`` (or ``[TOC]``) line -> a Confluence Table of Contents macro.
+_TOC_RE = re.compile(r"^\s*\[\[?TOC\]?\]\s*$", re.IGNORECASE)
+
+
+def _extract_toc(md: str):
+    """Swap a standalone ``[[TOC]]`` line for a Table-of-Contents placeholder.
+
+    Must run *before* :func:`_extract_wikilinks`, otherwise ``[[TOC]]`` would be
+    captured as a page wikilink. The placeholder is restored to a Confluence
+    ``toc`` macro after conversion, reusing the same ``<p>token</p>`` swap the
+    callouts use (so the macro lands as a top-level element, not inside a ``<p>``).
+
+    :param md: the source Markdown.
+    :type md: str
+    :returns: a ``(markdown_with_tokens, macros)`` pair, where ``macros`` maps
+        each placeholder token to its ``toc`` macro HTML.
+    :rtype: tuple[str, dict[str, str]]
+    """
+    macros, out = {}, []
+    for line in md.split("\n"):
+        if _TOC_RE.match(line):
+            token = f"xTOC{len(macros)}x"
+            macros[token] = ('<ac:structured-macro ac:name="toc" ac:schema-version="1">'
+                             '<ac:parameter ac:name="maxLevel">2</ac:parameter>'
+                             "</ac:structured-macro>")
+            out += ["", token, ""]
+        else:
+            out.append(line)
+    return "\n".join(out), macros
+
+
 def _fix_autolinks(html: str) -> str:
     """Turn angle-bracket autolinks ``<http://...>`` into ``<a>`` tags.
 
@@ -283,6 +314,7 @@ def md_to_storage(md: str, img_dir=None, prefix=""):
         well-formed.
     """
     md = mdc.strip_frontmatter(md)
+    md, tocs = _extract_toc(md)                  # before wikilinks: [[TOC]] is not a page link
     md, links = _extract_wikilinks(md, prefix)   # before conversion (converter flattens them)
     md, macros = _extract_callouts(md)
     prev_dir, prev_rel = mdc._current_img_dir, mdc._current_img_rel
@@ -293,7 +325,7 @@ def md_to_storage(md: str, img_dir=None, prefix=""):
         html = mdc.convert_markdown_to_html(md)   # renders Mermaid to PNG when img_dir set
     finally:
         mdc._current_img_dir, mdc._current_img_rel = prev_dir, prev_rel
-    for token, macro in macros.items():
+    for token, macro in {**macros, **tocs}.items():
         html = html.replace(f"<p>{token}</p>", macro)
     html, atts = _images_to_attachments(html, img_dir) if img_dir else (html, [])
     html = _fix_autolinks(html)
